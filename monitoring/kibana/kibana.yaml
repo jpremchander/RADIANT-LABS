@@ -41,10 +41,17 @@ spec:
         - sh
         - -c
         - |
-          until wget -qO- http://elasticsearch.monitoring.svc.cluster.local:9200/_cluster/health 2>/dev/null | grep -q '"status":"green"\|"status":"yellow"'; do
+          until wget -qO- http://elasticsearch.monitoring.svc.cluster.local:9200/_cluster/health 2>/dev/null | grep -q '"status"'; do
             echo "Waiting for Elasticsearch..."; sleep 10;
           done
           echo "Elasticsearch is ready"
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
       containers:
       - name: kibana
         image: docker.elastic.co/kibana/kibana:8.13.4

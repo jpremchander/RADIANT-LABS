@@ -56,6 +56,13 @@ spec:
         command: ["sh", "-c", "chown -R 1000:1000 /usr/share/elasticsearch/data"]
         securityContext:
           runAsUser: 0
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
         volumeMounts:
         - name: elasticsearch-data
           mountPath: /usr/share/elasticsearch/data
@@ -64,6 +71,13 @@ spec:
         command: ["sysctl", "-w", "vm.max_map_count=262144"]
         securityContext:
           privileged: true
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
       containers:
       - name: elasticsearch
         image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
@@ -85,8 +99,6 @@ spec:
           value: "false"
         - name: network.host
           value: "0.0.0.0"
-        - name: http.port
-          value: "9200"
         ports:
         - name: http
           containerPort: 9200
