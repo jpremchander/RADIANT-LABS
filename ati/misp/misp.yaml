@@ -62,6 +62,13 @@ spec:
             echo "Waiting for MySQL..."; sleep 5;
           done
           echo "MySQL is ready"
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
       - name: wait-for-redis
         image: busybox:1.36
         command:
@@ -72,6 +79,13 @@ spec:
             echo "Waiting for Redis..."; sleep 3;
           done
           echo "Redis is ready"
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
       containers:
       - name: misp
         image: ghcr.io/misp/misp-docker/misp-core:latest
@@ -107,8 +121,6 @@ spec:
           value: "RADIANT-LAB"
         - name: MISP_HOST_ORG_ID
           value: "1"
-        - name: MISP_MODULES_URL
-          value: "http://localhost:6666"
         ports:
         - name: http
           containerPort: 80
