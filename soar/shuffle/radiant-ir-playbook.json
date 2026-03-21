@@ -1,0 +1,24 @@
+{
+  "name": "RADIANT - Detection to Recovery",
+  "description": "Automated IR: Suricata alert → pfSense block → MISP event → Recovery",
+  "tags": ["radiant","incident-response","automated"],
+  "variables": [
+    {"name": "MISP_KEY", "description": "MISP API auth key", "value": "REPLACE_WITH_MISP_AUTH_KEY"},
+    {"name": "PFSENSE_KEY", "description": "pfSense API key", "value": "REPLACE_WITH_PFSENSE_API_KEY"}
+  ],
+  "setup_notes": [
+    "1. Import this file: Shuffle UI -> Workflows -> Import",
+    "2. Set MISP_KEY to your MISP auth key (MISP -> My Profile -> Auth key)",
+    "3. Install pfSense API package: System -> Package Manager -> pfsense-api",
+    "4. Set PFSENSE_KEY to pfSense API key",
+    "5. Create Kibana Watcher using docs/kibana-watcher-setup.md",
+    "6. Test: bash scripts/demo-pcap-replay.sh"
+  ],
+  "actions": [
+    {"name": "1-Detection",   "description": "Suricata alert received via Kibana Watcher webhook"},
+    {"name": "2-Containment", "description": "POST to pfSense API - add block rule for src_ip"},
+    {"name": "3-Eradication", "description": "POST to MISP API - create event with IOCs + ATT&CK tags"},
+    {"name": "4-Wait",        "description": "Wait 300 seconds - confirm no further C2 activity"},
+    {"name": "5-Recovery",    "description": "DELETE pfSense block rule - PUT MISP event to resolved"}
+  ]
+}
