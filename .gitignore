@@ -1,0 +1,8 @@
+credentials.txt
+*.secret
+.env
+secrets/
+kubeconfig
+*.key
+*.pem
+*.crt

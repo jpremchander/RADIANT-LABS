@@ -1,0 +1,322 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: enrichment-script
+  namespace: ai
+data:
+  worker.py: |
+    #!/usr/bin/env python3
+    """
+    RADIANT Enrichment Worker
+    Watches Elasticsearch for Suricata alerts, submits hashes/URLs
+    to Hatching Triage sandbox, writes results back to MISP.
+    """
+    import os, time, json, logging, hashlib
+    import requests
+    from datetime import datetime, timezone
+    from pymisp import PyMISP, MISPEvent, MISPAttribute
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s"
+    )
+    log = logging.getLogger("radiant-enrichment")
+
+    # Config from environment / secrets
+    ES_URL       = os.getenv("ES_URL", "http://elasticsearch.monitoring.svc.cluster.local:9200")
+    MISP_URL     = os.getenv("MISP_URL", "http://misp.ati.svc.cluster.local")
+    MISP_KEY     = os.getenv("MISP_KEY", "")
+    TRIAGE_KEY   = os.getenv("TRIAGE_API_KEY", "")
+    TRIAGE_URL   = "https://tria.ge/api/v0"
+    POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "30"))
+
+    # Track processed alerts to avoid reprocessing
+    processed_ids = set()
+
+    def get_recent_alerts(minutes=2):
+        """Fetch recent Suricata alerts from Elasticsearch."""
+        query = {
+            "query": {
+                "bool": {
+                    "must": [
+                        {"term": {"event_type": "alert"}},
+                        {"range": {"@timestamp": {"gte": f"now-{minutes}m"}}}
+                    ]
+                }
+            },
+            "sort": [{"@timestamp": {"order": "desc"}}],
+            "size": 20
+        }
+        try:
+            r = requests.post(
+                f"{ES_URL}/suricata-*/_search",
+                json=query, timeout=10
+            )
+            r.raise_for_status()
+            return r.json().get("hits", {}).get("hits", [])
+        except Exception as e:
+            log.error(f"Elasticsearch query failed: {e}")
+            return []
+
+    def submit_to_triage(indicator, kind="url"):
+        """Submit URL or file hash to Hatching Triage for sandboxing."""
+        if not TRIAGE_KEY:
+            log.warning("No Triage API key configured — skipping sandbox")
+            return None
+
+        headers = {"Authorization": f"Bearer {TRIAGE_KEY}"}
+
+        if kind == "url":
+            payload = {"kind": "url", "url": indicator}
+            try:
+                r = requests.post(
+                    f"{TRIAGE_URL}/samples",
+                    json=payload, headers=headers, timeout=15
+                )
+                r.raise_for_status()
+                sample_id = r.json().get("id")
+                log.info(f"Submitted URL to Triage: {indicator} -> {sample_id}")
+                return sample_id
+            except Exception as e:
+                log.error(f"Triage submission failed: {e}")
+                return None
+        return None
+
+    def get_triage_report(sample_id, max_wait=120):
+        """Poll Triage for completed sandbox report."""
+        if not TRIAGE_KEY or not sample_id:
+            return None
+
+        headers = {"Authorization": f"Bearer {TRIAGE_KEY}"}
+        waited = 0
+
+        while waited < max_wait:
+            try:
+                r = requests.get(
+                    f"{TRIAGE_URL}/samples/{sample_id}",
+                    headers=headers, timeout=10
+                )
+                r.raise_for_status()
+                data = r.json()
+                status = data.get("status")
+
+                if status == "reported":
+                    log.info(f"Triage report ready: {sample_id}")
+                    return data
+                elif status in ("failed", "error"):
+                    log.warning(f"Triage analysis failed for {sample_id}")
+                    return None
+                else:
+                    log.debug(f"Triage status {status} for {sample_id}, waiting...")
+                    time.sleep(15)
+                    waited += 15
+            except Exception as e:
+                log.error(f"Triage report fetch failed: {e}")
+                return None
+
+        log.warning(f"Triage report timeout for {sample_id}")
+        return None
+
+    def create_misp_event(alert, triage_report=None):
+        """Create a MISP event from a Suricata alert + optional Triage report."""
+        if not MISP_KEY:
+            log.warning("No MISP key configured — skipping MISP event creation")
+            return
+
+        try:
+            misp = PyMISP(MISP_URL, MISP_KEY, False)
+
+            event = MISPEvent()
+            event.info = f"RADIANT Detection: {alert.get('alert', {}).get('signature', 'Unknown')} [{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}]"
+            event.distribution = 0
+            event.threat_level_id = 2
+            event.analysis = 1
+            event.add_tag("radiant:automated-detection")
+            event.add_tag("tlp:white")
+
+            # Source IP
+            src_ip = alert.get("src_ip")
+            if src_ip:
+                attr = MISPAttribute()
+                attr.type = "ip-src"
+                attr.value = src_ip
+                attr.comment = "Suricata alert source IP"
+                event.add_attribute(**attr)
+
+            # Destination IP
+            dest_ip = alert.get("dest_ip")
+            if dest_ip:
+                attr = MISPAttribute()
+                attr.type = "ip-dst"
+                attr.value = dest_ip
+                attr.comment = "Suricata alert destination IP"
+                event.add_attribute(**attr)
+
+            # HTTP host if present
+            http = alert.get("http", {})
+            if http.get("hostname"):
+                event.add_attribute("domain", http["hostname"],
+                                    comment="HTTP hostname from alert")
+            if http.get("url"):
+                event.add_attribute("url",
+                                    f"http://{http.get('hostname','')}{http['url']}",
+                                    comment="HTTP URL from alert")
+
+            # Triage report enrichment
+            if triage_report:
+                families = triage_report.get("family", [])
+                if families:
+                    event.add_tag(f"malware:{families[0]}")
+                    event.add_attribute("comment",
+                                        f"Triage sandbox identified malware family: {', '.join(families)}",
+                                        disable_correlation=True)
+
+                triage_url = f"https://tria.ge/{triage_report.get('id', '')}"
+                event.add_attribute("url", triage_url,
+                                    comment="Hatching Triage sandbox report")
+                event.add_tag("radiant:sandbox-confirmed")
+
+            result = misp.add_event(event)
+            log.info(f"MISP event created: {result.get('Event', {}).get('id', 'unknown')}")
+
+        except Exception as e:
+            log.error(f"MISP event creation failed: {e}")
+
+    def process_alert(hit):
+        """Process a single Elasticsearch alert document."""
+        alert_id = hit["_id"]
+        if alert_id in processed_ids:
+            return
+
+        processed_ids.add(alert_id)
+        alert = hit["_source"]
+        sig = alert.get("alert", {}).get("signature", "")
+        src  = alert.get("src_ip", "unknown")
+        dest = alert.get("dest_ip", "unknown")
+
+        log.info(f"Processing alert: {sig} | {src} -> {dest}")
+
+        # Submit HTTP URLs to Triage
+        sample_id = None
+        http = alert.get("http", {})
+        if http.get("hostname") and TRIAGE_KEY:
+            url = f"http://{http['hostname']}{http.get('url','/')}"
+            sample_id = submit_to_triage(url, kind="url")
+
+        # Wait for Triage report
+        triage_report = None
+        if sample_id:
+            log.info(f"Waiting for Triage report on {sample_id}...")
+            triage_report = get_triage_report(sample_id, max_wait=90)
+
+        # Create MISP event
+        create_misp_event(alert, triage_report)
+
+    def main():
+        log.info("=== RADIANT Enrichment Worker starting ===")
+        log.info(f"ES: {ES_URL}")
+        log.info(f"MISP: {MISP_URL}")
+        log.info(f"Triage: {'configured' if TRIAGE_KEY else 'NOT configured - set TRIAGE_API_KEY'}")
+        log.info(f"Poll interval: {POLL_INTERVAL}s")
+
+        while True:
+            try:
+                alerts = get_recent_alerts(minutes=POLL_INTERVAL // 30 + 1)
+                if alerts:
+                    log.info(f"Found {len(alerts)} recent alerts")
+                    for hit in alerts:
+                        process_alert(hit)
+                else:
+                    log.debug("No new alerts")
+            except Exception as e:
+                log.error(f"Main loop error: {e}")
+
+            time.sleep(POLL_INTERVAL)
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: enrichment-requirements
+  namespace: ai
+data:
+  requirements.txt: |
+    pymisp==2.4.196
+    requests==2.32.3
+    urllib3==2.2.1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enrichment-worker
+  namespace: ai
+  labels:
+    app: enrichment-worker
+    project: radiant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enrichment-worker
+  template:
+    metadata:
+      labels:
+        app: enrichment-worker
+        project: radiant
+    spec:
+      initContainers:
+      - name: install-deps
+        image: python:3.12-slim
+        command:
+        - sh
+        - -c
+        - pip install --quiet pymisp==2.4.196 requests==2.32.3 -t /app/deps
+        volumeMounts:
+        - name: app-deps
+          mountPath: /app/deps
+      containers:
+      - name: enrichment-worker
+        image: python:3.12-slim
+        imagePullPolicy: IfNotPresent
+        command:
+        - sh
+        - -c
+        - PYTHONPATH=/app/deps python /scripts/worker.py
+        env:
+        - name: ES_URL
+          value: "http://elasticsearch.monitoring.svc.cluster.local:9200"
+        - name: MISP_URL
+          value: "http://misp.ati.svc.cluster.local"
+        - name: MISP_KEY
+          valueFrom:
+            secretKeyRef:
+              name: triage-secret
+              key: misp-key
+        - name: TRIAGE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: triage-secret
+              key: api-key
+        - name: POLL_INTERVAL
+          value: "30"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "300m"
+        volumeMounts:
+        - name: enrichment-script
+          mountPath: /scripts
+        - name: app-deps
+          mountPath: /app/deps
+      volumes:
+      - name: enrichment-script
+        configMap:
+          name: enrichment-script
+          defaultMode: 0755
+      - name: app-deps
+        emptyDir: {}

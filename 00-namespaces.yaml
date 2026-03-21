@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ati
+  labels:
+    project: radiant
+    tier: ati
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: adi
+  labels:
+    project: radiant
+    tier: adi
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai
+  labels:
+    project: radiant
+    tier: ai
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    project: radiant
+    tier: monitoring
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: soar
+  labels:
+    project: radiant
+    tier: soar
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ati-quota
+  namespace: ati
+spec:
+  hard:
+    requests.memory: "3Gi"
+    limits.memory: "4Gi"
+    pods: "10"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: adi-quota
+  namespace: adi
+spec:
+  hard:
+    requests.memory: "2Gi"
+    limits.memory: "3Gi"
+    pods: "10"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ai-quota
+  namespace: ai
+spec:
+  hard:
+    requests.memory: "512Mi"
+    limits.memory: "1Gi"
+    pods: "10"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: monitoring-quota
+  namespace: monitoring
+spec:
+  hard:
+    requests.memory: "4Gi"
+    limits.memory: "6Gi"
+    pods: "10"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: soar-quota
+  namespace: soar
+spec:
+  hard:
+    requests.memory: "1Gi"
+    limits.memory: "2Gi"
+    pods: "10"

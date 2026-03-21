@@ -1,0 +1,299 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rules-updater-sa
+  namespace: adi
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: configmap-updater
+  namespace: adi
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get","patch","update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rules-updater-binding
+  namespace: adi
+subjects:
+- kind: ServiceAccount
+  name: rules-updater-sa
+  namespace: adi
+roleRef:
+  kind: Role
+  name: configmap-updater
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rules-updater-script
+  namespace: adi
+data:
+  update-rules.py: |
+    #!/usr/bin/env python3
+    """
+    RADIANT Rules Updater CronJob
+    Pulls IOCs from MISP every 15 minutes and updates
+    the Suricata rules ConfigMap so new detections are live.
+    """
+    import os, json, logging, subprocess
+    import requests
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    log = logging.getLogger("rules-updater")
+
+    MISP_URL  = os.getenv("MISP_URL", "http://misp.ati.svc.cluster.local")
+    MISP_KEY  = os.getenv("MISP_KEY", "")
+    NAMESPACE = os.getenv("NAMESPACE", "adi")
+    CONFIGMAP = os.getenv("CONFIGMAP", "suricata-rules")
+
+    def fetch_misp_iocs():
+        """Fetch recent IOCs from MISP and convert to Suricata rules."""
+        if not MISP_KEY:
+            log.warning("No MISP key — using seed rules only")
+            return []
+
+        headers = {
+            "Authorization": MISP_KEY,
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+
+        rules = []
+        sid = 9001000
+
+        # Fetch domain IOCs
+        try:
+            r = requests.post(
+                f"{MISP_URL}/attributes/restSearch",
+                headers=headers,
+                json={
+                    "returnFormat": "json",
+                    "type": ["domain", "hostname"],
+                    "to_ids": True,
+                    "limit": 100,
+                    "last": "7d"
+                },
+                timeout=15,
+                verify=False
+            )
+            r.raise_for_status()
+            attrs = r.json().get("response", {}).get("Attribute", [])
+            log.info(f"Fetched {len(attrs)} domain IOCs from MISP")
+
+            for attr in attrs:
+                value = attr.get("value", "").strip()
+                if not value or len(value) > 100:
+                    continue
+                event_id = attr.get("event_id", "0")
+                rules.append(
+                    f'alert dns any any -> any any (msg:"MISP IOC - malicious domain MISP#{event_id}"; '
+                    f'dns.query; content:"{value}"; nocase; '
+                    f'sid:{sid}; rev:1; classtype:trojan-activity;)'
+                )
+                sid += 1
+        except Exception as e:
+            log.error(f"Failed to fetch domain IOCs: {e}")
+
+        # Fetch IP IOCs
+        try:
+            r = requests.post(
+                f"{MISP_URL}/attributes/restSearch",
+                headers=headers,
+                json={
+                    "returnFormat": "json",
+                    "type": ["ip-dst", "ip-src"],
+                    "to_ids": True,
+                    "limit": 100,
+                    "last": "7d"
+                },
+                timeout=15,
+                verify=False
+            )
+            r.raise_for_status()
+            attrs = r.json().get("response", {}).get("Attribute", [])
+            log.info(f"Fetched {len(attrs)} IP IOCs from MISP")
+
+            for attr in attrs:
+                value = attr.get("value", "").strip()
+                if not value:
+                    continue
+                event_id = attr.get("event_id", "0")
+                rules.append(
+                    f'alert ip any any -> {value} any (msg:"MISP IOC - malicious IP MISP#{event_id}"; '
+                    f'sid:{sid}; rev:1; classtype:trojan-activity;)'
+                )
+                sid += 1
+        except Exception as e:
+            log.error(f"Failed to fetch IP IOCs: {e}")
+
+        # Fetch URL IOCs
+        try:
+            r = requests.post(
+                f"{MISP_URL}/attributes/restSearch",
+                headers=headers,
+                json={
+                    "returnFormat": "json",
+                    "type": ["url"],
+                    "to_ids": True,
+                    "limit": 50,
+                    "last": "7d"
+                },
+                timeout=15,
+                verify=False
+            )
+            r.raise_for_status()
+            attrs = r.json().get("response", {}).get("Attribute", [])
+            log.info(f"Fetched {len(attrs)} URL IOCs from MISP")
+
+            for attr in attrs:
+                value = attr.get("value", "").strip()
+                if not value:
+                    continue
+                # Extract path from URL for Suricata http.uri match
+                path = "/" + "/".join(value.split("/")[3:]) if "/" in value[8:] else "/"
+                event_id = attr.get("event_id", "0")
+                rules.append(
+                    f'alert http any any -> any any (msg:"MISP IOC - malicious URL MISP#{event_id}"; '
+                    f'flow:established,to_server; http.uri; content:"{path}"; '
+                    f'sid:{sid}; rev:1; classtype:trojan-activity;)'
+                )
+                sid += 1
+        except Exception as e:
+            log.error(f"Failed to fetch URL IOCs: {e}")
+
+        return rules
+
+    def update_configmap(rules):
+        """Patch the Suricata rules ConfigMap via kubectl."""
+        # Always include base seed rules
+        seed_rules = [
+            '# Auto-updated by RADIANT rules-updater CronJob',
+            f'# Last update: {__import__("datetime").datetime.utcnow().isoformat()}',
+            f'# Total MISP IOC rules: {len(rules)}',
+            '',
+            '# Seed detection rules',
+            'alert http any any -> $EXTERNAL_NET any (msg:"RADIANT - Suspicious POST to gate.php"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/gate.php"; sid:9000002; rev:1; classtype:trojan-activity;)',
+            'alert dns any any -> any any (msg:"RADIANT - Cobalt Strike DNS beacon pattern"; dns.query; pcre:"/[a-z]{12,}\\.(com|net|org)/i"; sid:9000003; rev:1; classtype:trojan-activity;)',
+        ]
+
+        all_rules = seed_rules + rules
+        rules_content = "\n".join(all_rules)
+
+        # Use kubectl patch to update the ConfigMap
+        patch = {
+            "data": {
+                "misp-iocs.rules": rules_content
+            }
+        }
+
+        try:
+            result = subprocess.run(
+                ["kubectl", "patch", "configmap", CONFIGMAP,
+                 "-n", NAMESPACE,
+                 "--type=merge",
+                 "-p", json.dumps(patch)],
+                capture_output=True, text=True, check=True
+            )
+            log.info(f"ConfigMap updated: {result.stdout.strip()}")
+
+            # Signal Suricata to reload rules
+            result = subprocess.run(
+                ["kubectl", "exec", "-n", "adi",
+                 "daemonset/suricata", "--",
+                 "suricatasc", "-c", "reload-rules"],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                log.info("Suricata rules reloaded successfully")
+            else:
+                log.warning(f"Suricata reload warning: {result.stderr}")
+
+        except subprocess.CalledProcessError as e:
+            log.error(f"kubectl patch failed: {e.stderr}")
+
+    if __name__ == "__main__":
+        log.info("=== RADIANT Rules Updater starting ===")
+        rules = fetch_misp_iocs()
+        log.info(f"Generated {len(rules)} rules from MISP IOCs")
+        update_configmap(rules)
+        log.info("=== Rules update complete ===")
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: suricata-rules-updater
+  namespace: adi
+  labels:
+    app: rules-updater
+    project: radiant
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: rules-updater
+        spec:
+          serviceAccountName: rules-updater-sa
+          restartPolicy: OnFailure
+          initContainers:
+          - name: install-deps
+            image: python:3.12-slim
+            command:
+            - sh
+            - -c
+            - pip install --quiet requests urllib3 -t /app/deps
+            volumeMounts:
+            - name: app-deps
+              mountPath: /app/deps
+          containers:
+          - name: rules-updater
+            image: python:3.12-slim
+            command:
+            - sh
+            - -c
+            - PYTHONPATH=/app/deps python /scripts/update-rules.py
+            env:
+            - name: MISP_URL
+              value: "http://misp.ati.svc.cluster.local"
+            - name: MISP_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: misp-authkey-secret
+                  namespace: adi
+                  key: key
+              # Note: create this secret after MISP is up:
+              # kubectl create secret generic misp-authkey-secret -n adi --from-literal=key=YOUR_MISP_KEY
+            - name: NAMESPACE
+              value: "adi"
+            - name: CONFIGMAP
+              value: "suricata-rules"
+            resources:
+              requests:
+                memory: "64Mi"
+                cpu: "50m"
+              limits:
+                memory: "128Mi"
+                cpu: "200m"
+            volumeMounts:
+            - name: rules-updater-script
+              mountPath: /scripts
+            - name: app-deps
+              mountPath: /app/deps
+          volumes:
+          - name: rules-updater-script
+            configMap:
+              name: rules-updater-script
+              defaultMode: 0755
+          - name: app-deps
+            emptyDir: {}

@@ -1,0 +1,150 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: misp-data
+  namespace: ati
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: misp
+  namespace: ati
+  labels:
+    app: misp
+    project: radiant
+spec:
+  type: ClusterIP
+  selector:
+    app: misp
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  - name: https
+    port: 443
+    targetPort: 443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: misp
+  namespace: ati
+  labels:
+    app: misp
+    project: radiant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: misp
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: misp
+        project: radiant
+    spec:
+      initContainers:
+      - name: wait-for-mysql
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          until nc -z mysql.ati.svc.cluster.local 3306; do
+            echo "Waiting for MySQL..."; sleep 5;
+          done
+          echo "MySQL is ready"
+      - name: wait-for-redis
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          until nc -z redis.ati.svc.cluster.local 6379; do
+            echo "Waiting for Redis..."; sleep 3;
+          done
+          echo "Redis is ready"
+      containers:
+      - name: misp
+        image: ghcr.io/misp/misp-docker/misp-core:latest
+        imagePullPolicy: Always
+        env:
+        - name: MYSQL_HOST
+          value: "mysql.ati.svc.cluster.local"
+        - name: MYSQL_PORT
+          value: "3306"
+        - name: MYSQL_DATABASE
+          value: "misp"
+        - name: MYSQL_USER
+          value: "misp"
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: misp-password
+        - name: REDIS_HOST
+          value: "redis.ati.svc.cluster.local"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: MISP_ADMIN_EMAIL
+          value: "admin@radiant.lab"
+        - name: MISP_ADMIN_PASSPHRASE
+          valueFrom:
+            secretKeyRef:
+              name: misp-secret
+              key: admin-password
+        - name: MISP_BASEURL
+          value: "http://misp.lab"
+        - name: MISP_ORG
+          value: "RADIANT-LAB"
+        - name: MISP_HOST_ORG_ID
+          value: "1"
+        - name: MISP_MODULES_URL
+          value: "http://localhost:6666"
+        ports:
+        - name: http
+          containerPort: 80
+        - name: https
+          containerPort: 443
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "1.5Gi"
+            cpu: "1000m"
+        readinessProbe:
+          httpGet:
+            path: /users/login
+            port: 80
+          initialDelaySeconds: 120
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 10
+        livenessProbe:
+          httpGet:
+            path: /users/login
+            port: 80
+          initialDelaySeconds: 180
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 5
+        volumeMounts:
+        - name: misp-data
+          mountPath: /var/www/MISP/app/files
+        - name: misp-config
+          mountPath: /var/www/MISP/app/Config
+      volumes:
+      - name: misp-data
+        persistentVolumeClaim:
+          claimName: misp-data
+      - name: misp-config
+        emptyDir: {}
