@@ -89,7 +89,7 @@ spec:
       containers:
       - name: misp
         image: ghcr.io/misp/misp-docker/misp-core:latest
-        imagePullPolicy: Always
+        imagePullPolicy: Never
         env:
         - name: MYSQL_HOST
           value: "mysql.ati.svc.cluster.local"
