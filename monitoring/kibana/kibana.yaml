@@ -36,7 +36,7 @@ spec:
     spec:
       initContainers:
       - name: wait-for-elasticsearch
-        image: busybox:1.36
+        image: docker.io/library/busybox:1.36
         command:
         - sh
         - -c
@@ -54,7 +54,7 @@ spec:
             cpu: "100m"
       containers:
       - name: kibana
-        image: docker.elastic.co/kibana/kibana:8.13.4
+        image: docker.io/library/kibana:8.13.4
         imagePullPolicy: Never
         env:
         - name: ELASTICSEARCH_HOSTS
