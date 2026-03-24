@@ -20,22 +20,9 @@ data:
         environment: radiant-lab
       fields_under_root: false
 
-    processors:
-      - add_host_metadata:
-          when.not.contains.tags: forwarded
-      - add_cloud_metadata: ~
-      - decode_json_fields:
-          fields: ["message"]
-          target: ""
-          overwrite_keys: true
-          when:
-            has_fields: ["message"]
-
     output.elasticsearch:
       hosts: ["elasticsearch.monitoring.svc.cluster.local:9200"]
       index: "suricata-%{+yyyy.MM.dd}"
-      template.name: "suricata"
-      template.pattern: "suricata-*"
 
     setup.template:
       name: "suricata"
@@ -46,12 +33,6 @@ data:
       host: "kibana.monitoring.svc.cluster.local:5601"
 
     logging.level: info
-    logging.to_files: true
-    logging.files:
-      path: /var/log/filebeat
-      name: filebeat
-      keepfiles: 3
-      permissions: 0644
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -76,7 +57,7 @@ spec:
       containers:
       - name: filebeat
         image: docker.elastic.co/beats/filebeat:8.13.4
-        imagePullPolicy: Never
+        imagePullPolicy: IfNotPresent
         args:
         - -c
         - /etc/filebeat.yml
@@ -124,9 +105,6 @@ rules:
   verbs: ["get","watch","list"]
 - apiGroups: ["apps"]
   resources: ["replicasets"]
-  verbs: ["get","list","watch"]
-- apiGroups: ["batch"]
-  resources: ["jobs"]
   verbs: ["get","list","watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
