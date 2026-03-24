@@ -25,7 +25,6 @@ data:
             - http
             - tls
             - flow
-
       - fast:
           enabled: yes
           filename: fast.log
@@ -43,7 +42,7 @@ data:
       - profile: medium
 
     rule-files:
-      - misp-iocs.rules
+      - /var/lib/suricata/rules/misp-iocs.rules
 
 ---
 apiVersion: v1
@@ -53,10 +52,7 @@ metadata:
   namespace: adi
 data:
   misp-iocs.rules: |
-    alert http any any -> $EXTERNAL_NET any (msg:"RADIANT - Suspicious POST to gate.php"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/gate.php"; sid:9000001; rev:1; classtype:trojan-activity;)
-    alert dns any any -> any any (msg:"RADIANT - Suspicious long DNS subdomain"; dns.query; pcre:"/[a-z0-9]{12,}\.(com|net|org|io)/i"; sid:9000002; rev:1; classtype:trojan-activity;)
-    alert tcp $HOME_NET any -> $EXTERNAL_NET 443 (msg:"RADIANT - Cobalt Strike beacon size"; flow:established,to_server; dsize:300<>500; sid:9000003; rev:1; classtype:trojan-activity;)
-    alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"RADIANT - IcedID style checkin"; flow:established,to_server; http.method; content:"GET"; http.uri; content:"/"; depth:1; sid:9000004; rev:1; classtype:trojan-activity;)
+    alert icmp any any -> any any (msg:"RADIANT ICMP test"; sid:9000001; rev:1;)
 
 ---
 apiVersion: apps/v1
@@ -113,15 +109,6 @@ spec:
               subPath: misp-iocs.rules
             - name: suricata-logs
               mountPath: /var/log/suricata
-          livenessProbe:
-            exec:
-              command:
-                - sh
-                - -c
-                - "test -f /var/log/suricata/eve.json"
-            initialDelaySeconds: 90
-            periodSeconds: 30
-            failureThreshold: 5
       volumes:
         - name: suricata-config
           configMap:
