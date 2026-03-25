@@ -88,7 +88,7 @@ spec:
       containers:
       - name: misp
         image: ghcr.io/misp/misp-docker/misp-core:latest
-        imagePullPolicy: Always
+        imagePullPolicy: Never
         env:
         - name: MYSQL_HOST
           value: "mysql.ati.svc.cluster.local"
@@ -115,7 +115,7 @@ spec:
               name: misp-secret
               key: admin-password
         - name: MISP_BASEURL
-          value: "http://192.168.10.90"
+          value: "http://192.168.10.90:30080"
         - name: MISP_ORG
           value: "RADIANT-LAB"
         - name: MISP_HOST_ORG_ID
