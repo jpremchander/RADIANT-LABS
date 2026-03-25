@@ -27,10 +27,7 @@ spec:
     port: 80
     targetPort: 80
     nodePort: 30080
-  - name: https
-    port: 443
-    targetPort: 443
-    nodePort: 30443
+
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -118,7 +115,7 @@ spec:
               name: misp-secret
               key: admin-password
         - name: MISP_BASEURL
-          value: "https://192.168.10.90:30443"
+          value: "http://192.168.10.90:30080"
         - name: MISP_ORG
           value: "RADIANT-LAB"
         - name: MISP_HOST_ORG_ID
