@@ -13,6 +13,7 @@ spec:
   ports:
   - name: http
     port: 5601
+    targetPort: 5601
     nodePort: 30601
 ---
 apiVersion: apps/v1
