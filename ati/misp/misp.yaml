@@ -176,8 +176,9 @@ spec:
 
           readinessProbe:
             httpGet:
+              scheme: HTTPS
               path: /users/login
-              port: 80
+              port: 443
             initialDelaySeconds: 120
             periodSeconds: 15
             timeoutSeconds: 10
@@ -185,8 +186,9 @@ spec:
 
           livenessProbe:
             httpGet:
+              scheme: HTTPS
               path: /users/login
-              port: 80
+              port: 443
             initialDelaySeconds: 180
             periodSeconds: 30
             timeoutSeconds: 10
