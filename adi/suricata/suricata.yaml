@@ -1,50 +1,13 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: suricata-config
-  namespace: adi
-data:
-  suricata.yaml: |
-    %YAML 1.1
-    ---
-    vars:
-      address-groups:
-        HOME_NET: "[192.168.10.0/24]"
-        EXTERNAL_NET: "!$HOME_NET"
-    default-log-dir: /var/log/suricata
-    outputs:
-      - eve-log:
-          enabled: yes
-          filetype: regular
-          filename: eve.json
-          types:
-            - alert
-            - dns
-            - http
-            - tls
-            - flow
-      - fast:
-          enabled: yes
-          filename: fast.log
-    af-packet:
-      - interface: ens33
-        cluster-id: 99
-        cluster-type: cluster_flow
-        defrag: yes
-    detect-engine:
-      - profile: medium
-    rule-files:
-      - /var/lib/suricata/rules/misp-iocs.rules
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
   name: suricata-rules
   namespace: adi
 data:
   misp-iocs.rules: |
     alert icmp any any -> any any (msg:"RADIANT ICMP test"; sid:9000001; rev:1;)
     alert http any any -> any any (msg:"RADIANT HTTP POST gate.php"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/gate.php"; sid:9000002; rev:1; classtype:trojan-activity;)
+    alert dns any any -> any any (msg:"RADIANT suspicious DNS query"; dns.query; pcre:"/[a-z0-9]{12,}\.(com|net|org)/i"; sid:9000003; rev:1; classtype:trojan-activity;)
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -66,6 +29,26 @@ spec:
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      initContainers:
+      - name: copy-rules
+        image: docker.io/library/busybox:1.36
+        imagePullPolicy: Never
+        command:
+        - sh
+        - -c
+        - cp /rules-src/misp-iocs.rules /rules-dst/misp-iocs.rules && echo "Rules copied OK"
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+        volumeMounts:
+        - name: suricata-rules-src
+          mountPath: /rules-src
+        - name: suricata-rules-dst
+          mountPath: /rules-dst
       containers:
       - name: suricata
         image: docker.io/jasonish/suricata:7.0
@@ -76,14 +59,16 @@ spec:
             - NET_ADMIN
             - NET_RAW
             - SYS_NICE
-        args:
+        command:
+        - /bin/sh
         - -c
-        - /etc/suricata/suricata.yaml
-        - -i
-        - ens33
-        - -l
-        - /var/log/suricata
-        - -v
+        - |
+          # Update HOME_NET in default config
+          sed -i 's|HOME_NET:.*|HOME_NET: "[192.168.10.0/24]"|g' /etc/suricata/suricata.yaml || true
+          # Add our rules file to the config
+          echo "    - /var/lib/suricata/rules/misp-iocs.rules" >> /etc/suricata/suricata.yaml || true
+          # Start Suricata with default config
+          exec suricata -i ens33 -l /var/log/suricata -v
         resources:
           requests:
             memory: "512Mi"
@@ -92,21 +77,16 @@ spec:
             memory: "1Gi"
             cpu: "1000m"
         volumeMounts:
-        - name: suricata-config
-          mountPath: /etc/suricata/suricata.yaml
-          subPath: suricata.yaml
-        - name: suricata-rules
-          mountPath: /var/lib/suricata/rules/misp-iocs.rules
-          subPath: misp-iocs.rules
+        - name: suricata-rules-dst
+          mountPath: /var/lib/suricata/rules
         - name: suricata-logs
           mountPath: /var/log/suricata
       volumes:
-      - name: suricata-config
-        configMap:
-          name: suricata-config
-      - name: suricata-rules
+      - name: suricata-rules-src
         configMap:
           name: suricata-rules
+      - name: suricata-rules-dst
+        emptyDir: {}
       - name: suricata-logs
         hostPath:
           path: /var/log/suricata
