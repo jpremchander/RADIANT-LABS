@@ -118,7 +118,7 @@ spec:
               name: misp-secret
               key: admin-password
         - name: MISP_BASEURL
-          value: "http://misp.lab"
+          value: "https://192.168.10.90:30443"
         - name: MISP_ORG
           value: "RADIANT-LAB"
         - name: MISP_HOST_ORG_ID
