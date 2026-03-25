@@ -63,12 +63,7 @@ spec:
         - /bin/sh
         - -c
         - |
-          # Update HOME_NET in default config
-          sed -i 's|HOME_NET:.*|HOME_NET: "[192.168.10.0/24]"|g' /etc/suricata/suricata.yaml || true
-          # Add our rules file to the config
-          echo "    - /var/lib/suricata/rules/misp-iocs.rules" >> /etc/suricata/suricata.yaml || true
-          # Start Suricata with default config
-          exec suricata -i ens33 -l /var/log/suricata -v
+          exec suricata -i ens33 -l /var/log/suricata -S /var/lib/suricata/rules/misp-iocs.rules -v
         resources:
           requests:
             memory: "512Mi"
