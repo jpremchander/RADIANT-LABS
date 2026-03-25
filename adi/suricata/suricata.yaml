@@ -11,9 +11,7 @@ data:
       address-groups:
         HOME_NET: "[192.168.10.0/24]"
         EXTERNAL_NET: "!$HOME_NET"
-
     default-log-dir: /var/log/suricata
-
     outputs:
       - eve-log:
           enabled: yes
@@ -28,22 +26,15 @@ data:
       - fast:
           enabled: yes
           filename: fast.log
-
     af-packet:
       - interface: ens33
         cluster-id: 99
         cluster-type: cluster_flow
         defrag: yes
-
-    pcap:
-      - interface: ens33
-
     detect-engine:
       - profile: medium
-
     rule-files:
       - /var/lib/suricata/rules/misp-iocs.rules
-
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -53,7 +44,7 @@ metadata:
 data:
   misp-iocs.rules: |
     alert icmp any any -> any any (msg:"RADIANT ICMP test"; sid:9000001; rev:1;)
-
+    alert http any any -> any any (msg:"RADIANT HTTP POST gate.php"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/gate.php"; sid:9000002; rev:1; classtype:trojan-activity;)
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -76,47 +67,47 @@ spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       containers:
-        - name: suricata
-          image: docker.io/jasonish/suricata:7.0
-          imagePullPolicy: Never
-          securityContext:
-            capabilities:
-              add:
-                - NET_ADMIN
-                - NET_RAW
-                - SYS_NICE
-          args:
-            - -c
-            - /etc/suricata/suricata.yaml
-            - -i
-            - ens33
-            - -l
-            - /var/log/suricata
-            - -v
-          resources:
-            requests:
-              memory: "512Mi"
-              cpu: "500m"
-            limits:
-              memory: "1Gi"
-              cpu: "1000m"
-          volumeMounts:
-            - name: suricata-config
-              mountPath: /etc/suricata/suricata.yaml
-              subPath: suricata.yaml
-            - name: suricata-rules
-              mountPath: /var/lib/suricata/rules/misp-iocs.rules
-              subPath: misp-iocs.rules
-            - name: suricata-logs
-              mountPath: /var/log/suricata
-      volumes:
+      - name: suricata
+        image: docker.io/jasonish/suricata:7.0
+        imagePullPolicy: Never
+        securityContext:
+          capabilities:
+            add:
+            - NET_ADMIN
+            - NET_RAW
+            - SYS_NICE
+        args:
+        - -c
+        - /etc/suricata/suricata.yaml
+        - -i
+        - ens33
+        - -l
+        - /var/log/suricata
+        - -v
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        volumeMounts:
         - name: suricata-config
-          configMap:
-            name: suricata-config
+          mountPath: /etc/suricata/suricata.yaml
+          subPath: suricata.yaml
         - name: suricata-rules
-          configMap:
-            name: suricata-rules
+          mountPath: /var/lib/suricata/rules/misp-iocs.rules
+          subPath: misp-iocs.rules
         - name: suricata-logs
-          hostPath:
-            path: /var/log/suricata
-            type: DirectoryOrCreate
+          mountPath: /var/log/suricata
+      volumes:
+      - name: suricata-config
+        configMap:
+          name: suricata-config
+      - name: suricata-rules
+        configMap:
+          name: suricata-rules
+      - name: suricata-logs
+        hostPath:
+          path: /var/log/suricata
+          type: DirectoryOrCreate
