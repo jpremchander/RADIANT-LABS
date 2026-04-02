@@ -6,33 +6,46 @@ metadata:
 data:
   filebeat.yml: |
     filebeat.inputs:
-    - type: filestream
-      id: suricata-eve
-      enabled: true
-      paths:
-        - /var/log/suricata/eve.json
-      parsers:
-        - ndjson:
-            target: ""
-            add_error_key: true
-      fields:
-        source: suricata
-        environment: radiant-lab
-      fields_under_root: false
+      - type: filestream
+        id: suricata-eve
+        enabled: true
+        paths:
+          - /var/log/suricata/eve.json
+        parsers:
+          - ndjson:
+              target: ""
+              add_error_key: true
+        close_inactive: 5m
+        ignore_older: 24h
+        prospector.scanner.check_interval: 10s
+        fields:
+          source: suricata
+          environment: radiant-lab
+        fields_under_root: true
+
+    processors:
+      - rename:
+          fields:
+            - from: "timestamp"
+              to: "@timestamp"
+          ignore_missing: true
+          fail_on_error: false
 
     output.elasticsearch:
-      hosts: ["elasticsearch.monitoring.svc.cluster.local:9200"]
-      index: "suricata-%{+yyyy.MM.dd}"
+      hosts: ["http://elasticsearch.monitoring.svc.cluster.local:9200"]
+      index: "radiant-suricata-v2-%{+yyyy.MM.dd}"
 
     setup.template:
-      name: "suricata"
-      pattern: "suricata-*"
+      name: "radiant-suricata-v2"
+      pattern: "radiant-suricata-v2-*"
       enabled: true
 
     setup.kibana:
-      host: "kibana.monitoring.svc.cluster.local:5601"
+      host: "http://kibana.monitoring.svc.cluster.local:5601"
 
     logging.level: info
+    logging.to_files: false
+
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -55,66 +68,69 @@ spec:
       serviceAccountName: filebeat-sa
       terminationGracePeriodSeconds: 30
       containers:
-      - name: filebeat
-        image: docker.elastic.co/beats/filebeat:8.13.4
-        imagePullPolicy: IfNotPresent
-        args:
-        - -c
-        - /etc/filebeat.yml
-        - -e
-        securityContext:
-          runAsUser: 0
-        resources:
-          requests:
-            memory: "64Mi"
-            cpu: "50m"
-          limits:
-            memory: "128Mi"
-            cpu: "200m"
-        volumeMounts:
-        - name: filebeat-config
-          mountPath: /etc/filebeat.yml
-          subPath: filebeat.yml
-          readOnly: true
-        - name: suricata-logs
-          mountPath: /var/log/suricata
-          readOnly: true
+        - name: filebeat
+          image: docker.elastic.co/beats/filebeat:8.13.4
+          imagePullPolicy: IfNotPresent
+          args:
+            - -c
+            - /etc/filebeat.yml
+            - -e
+          securityContext:
+            runAsUser: 0
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+          volumeMounts:
+            - name: filebeat-config
+              mountPath: /etc/filebeat.yml
+              subPath: filebeat.yml
+              readOnly: true
+            - name: suricata-logs
+              mountPath: /var/log/suricata
+              readOnly: true
       volumes:
-      - name: filebeat-config
-        configMap:
-          name: filebeat-config
-          defaultMode: 0640
-      - name: suricata-logs
-        hostPath:
-          path: /var/log/suricata
-          type: DirectoryOrCreate
+        - name: filebeat-config
+          configMap:
+            name: filebeat-config
+            defaultMode: 0640
+        - name: suricata-logs
+          hostPath:
+            path: /var/log/suricata
+            type: DirectoryOrCreate
+
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: filebeat-sa
   namespace: adi
+
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: filebeat-role
 rules:
-- apiGroups: [""]
-  resources: ["namespaces","pods","nodes"]
-  verbs: ["get","watch","list"]
-- apiGroups: ["apps"]
-  resources: ["replicasets"]
-  verbs: ["get","list","watch"]
+  - apiGroups: [""]
+    resources: ["namespaces", "pods", "nodes"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: filebeat-binding
 subjects:
-- kind: ServiceAccount
-  name: filebeat-sa
-  namespace: adi
+  - kind: ServiceAccount
+    name: filebeat-sa
+    namespace: adi
 roleRef:
   kind: ClusterRole
   name: filebeat-role
