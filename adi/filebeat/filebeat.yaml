@@ -13,7 +13,7 @@ data:
           - /var/log/suricata/eve.json
         parsers:
           - ndjson:
-              target: ""
+              target: "suricata"
               add_error_key: true
         close_inactive: 5m
         ignore_older: 24h
@@ -26,18 +26,18 @@ data:
     processors:
       - rename:
           fields:
-            - from: "timestamp"
+            - from: "suricata.timestamp"
               to: "@timestamp"
           ignore_missing: true
           fail_on_error: false
 
     output.elasticsearch:
       hosts: ["http://elasticsearch.monitoring.svc.cluster.local:9200"]
-      index: "radiant-suricata-v2-%{+yyyy.MM.dd}"
+      index: "radiant-suricata-v3-%{+yyyy.MM.dd}"
 
     setup.template:
-      name: "radiant-suricata-v2"
-      pattern: "radiant-suricata-v2-*"
+      name: "radiant-suricata-v3"
+      pattern: "radiant-suricata-v3-*"
       enabled: true
 
     setup.kibana:
