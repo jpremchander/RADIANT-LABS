@@ -25,11 +25,11 @@ data:
 
     output.elasticsearch:
       hosts: ["http://elasticsearch.monitoring.svc.cluster.local:9200"]
-      index: "suricata-%{+yyyy.MM.dd}"
+      index: "radiant-suricata-v2-%{+yyyy.MM.dd}"
 
     setup.template:
-      name: "suricata"
-      pattern: "suricata-*"
+      name: "radiant-suricata-v2"
+      pattern: "radiant-suricata-v2-*"
       enabled: true
 
     setup.kibana:
@@ -71,11 +71,11 @@ spec:
             runAsUser: 0
           resources:
             requests:
-              memory: "64Mi"
-              cpu: "50m"
-            limits:
               memory: "128Mi"
-              cpu: "200m"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
           volumeMounts:
             - name: filebeat-config
               mountPath: /etc/filebeat.yml
