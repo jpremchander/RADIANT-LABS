@@ -19,6 +19,10 @@ data:
           source: suricata
           environment: radiant-lab
         fields_under_root: true
+        ignore_older: 7h
+        close_inactive: 15m
+
+    setup.ilm.enabled: false
 
     output.elasticsearch:
       hosts: ["http://elasticsearch.monitoring.svc.cluster.local:9200"]
@@ -28,13 +32,14 @@ data:
       name: "radiant-suricata-v3"
       pattern: "radiant-suricata-v3-*"
       enabled: true
+      overwrite: true
 
     setup.kibana:
       host: "http://kibana.monitoring.svc.cluster.local:5601"
 
-    logging.level: debug
-    logging.selectors: ["*"]
-    
+    logging.level: info
+    logging.to_files: false
+
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -68,11 +73,11 @@ spec:
             runAsUser: 0
           resources:
             requests:
-              memory: "128Mi"
-              cpu: "100m"
-            limits:
               memory: "256Mi"
-              cpu: "300m"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "400m"
           volumeMounts:
             - name: filebeat-config
               mountPath: /etc/filebeat.yml
