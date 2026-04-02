@@ -43,9 +43,9 @@ data:
     setup.kibana:
       host: "http://kibana.monitoring.svc.cluster.local:5601"
 
-    logging.level: info
-    logging.to_files: false
-
+    logging.level: debug
+    logging.selectors: ["*"]
+    
 ---
 apiVersion: apps/v1
 kind: DaemonSet
