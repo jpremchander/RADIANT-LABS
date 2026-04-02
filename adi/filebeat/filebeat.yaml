@@ -15,21 +15,10 @@ data:
           - ndjson:
               target: "suricata"
               add_error_key: true
-        close_inactive: 5m
-        ignore_older: 24h
-        prospector.scanner.check_interval: 10s
         fields:
           source: suricata
           environment: radiant-lab
         fields_under_root: true
-
-    processors:
-      - rename:
-          fields:
-            - from: "suricata.timestamp"
-              to: "@timestamp"
-          ignore_missing: true
-          fail_on_error: false
 
     output.elasticsearch:
       hosts: ["http://elasticsearch.monitoring.svc.cluster.local:9200"]
