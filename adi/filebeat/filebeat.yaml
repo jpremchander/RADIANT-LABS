@@ -13,26 +13,27 @@ data:
           - /var/log/suricata/eve.json
         parsers:
           - ndjson:
-              target: "suricata"
+              target: ""
               add_error_key: true
+              overwrite_keys: true
+              expand_keys: true
         fields:
           source: suricata
           environment: radiant-lab
         fields_under_root: true
-        ignore_older: 7h
-        close_inactive: 15m
+        ignore_older: 1h
+        close_inactive: 5m
+        prospector.scanner.check_interval: 5s
 
     setup.ilm.enabled: false
+    setup.template.enabled: true
+    setup.template.name: "radiant-suricata-v3"
+    setup.template.pattern: "radiant-suricata-v3-*"
+    setup.template.overwrite: true
 
     output.elasticsearch:
       hosts: ["http://elasticsearch.monitoring.svc.cluster.local:9200"]
       index: "radiant-suricata-v3-%{+yyyy.MM.dd}"
-
-    setup.template:
-      name: "radiant-suricata-v3"
-      pattern: "radiant-suricata-v3-*"
-      enabled: true
-      overwrite: true
 
     setup.kibana:
       host: "http://kibana.monitoring.svc.cluster.local:5601"
