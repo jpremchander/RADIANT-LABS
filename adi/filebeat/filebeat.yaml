@@ -21,8 +21,8 @@ data:
           source: suricata
           environment: radiant-lab
         fields_under_root: true
-        ignore_older: 1h
-        close_inactive: 5m
+        ignore_older: 7h
+        close_inactive: 15m
         prospector.scanner.check_interval: 5s
 
     setup.ilm.enabled: false
@@ -130,3 +130,4 @@ roleRef:
   kind: ClusterRole
   name: filebeat-role
   apiGroup: rbac.authorization.k8s.io
+  
