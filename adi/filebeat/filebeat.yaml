@@ -13,9 +13,9 @@ data:
           - /var/log/suricata/eve.json
         parsers:
           - ndjson:
-              target: ""
+              target: "suricata"
               add_error_key: true
-              overwrite_keys: true
+              overwrite_keys: false
               expand_keys: true
         fields:
           source: suricata
