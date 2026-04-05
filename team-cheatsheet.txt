@@ -1,0 +1,131 @@
+RADIANT 30-Minute Live Demo Cheat Sheet (No PPT)
+Use this as the on-table script during the presentation.
+
+============================================================
+A) One-Time Start (before audience joins)
+============================================================
+1) Start local access tunnels:
+   powershell -ExecutionPolicy Bypass -File scripts/start-local-access.ps1
+
+2) Verify tunnels:
+   powershell -ExecutionPolicy Bypass -File scripts/status-local-access.ps1
+
+3) Health snapshot:
+   kubectl get pods -A
+
+4) Keep browser tabs open:
+   - MISP: https://127.0.0.1:18443/users/login
+   - Kibana: http://127.0.0.1:15601
+   - Grafana: http://127.0.0.1:13000
+   - Prometheus: http://127.0.0.1:19090
+   - Shuffle: http://127.0.0.1:13001
+
+5) Optional ES local port-forward for AI counts:
+   kubectl -n monitoring port-forward svc/elasticsearch 19200:9200
+
+
+============================================================
+B) Minute-by-Minute Run of Show (30 min)
+============================================================
+00:00-00:30  Prem (opening line)
+"We are demonstrating a Kubernetes-native SOC pipeline from threat intel to detection,
+AI-assisted triage, and response orchestration."
+
+00:30-07:30  Prem (Infra + architecture)
+Commands:
+- kubectl config current-context
+- kubectl cluster-info
+- kubectl get nodes -o wide
+- kubectl get ns
+- kubectl get pods -A -o wide
+- kubectl get resourcequota -A
+Show:
+- README Section 5.1 diagram and 5.2 workflow map
+Handoff:
+"I’ll hand over to Surmai for StamusML risk scoring."
+
+07:30-13:30  Surmai (StamusML)
+Commands:
+- kubectl get pods -n ai
+- kubectl -n ai logs deployment/stamusml-worker --tail=50
+- curl -s http://127.0.0.1:19200/radiant-stamusml-anomaly-*/_count
+Optional:
+- curl -s "http://127.0.0.1:19200/radiant-stamusml-anomaly-*/_search?size=1"
+Key line:
+"StamusML adds risk-based prioritization to raw alert streams."
+Handoff:
+"Diksha will now show Arkime-AI traffic context tagging."
+
+13:30-18:30  Diksha (Arkime-AI)
+Commands:
+- kubectl get pods -n ai
+- kubectl -n ai logs deployment/arkime-ai-worker --tail=50
+- curl -s http://127.0.0.1:19200/radiant-arkime-ai-tags-*/_count
+Optional:
+- curl -s "http://127.0.0.1:19200/radiant-arkime-ai-tags-*/_search?size=1"
+Key line:
+"Arkime-AI enriches HTTP telemetry with actionable behavior tags."
+Handoff:
+"Vamshi will now show live telemetry and observability dashboards."
+
+18:30-23:30  Vamshi (Monitoring + live logs)
+Show:
+- Kibana Discover, data view: radiant-suricata-v3-*
+- Filter: suricata.event_type : "alert"
+- Prometheus targets/query page
+- Grafana dashboard panels
+Support command:
+- kubectl top pods -A
+Required statement:
+"Hatching Triage external verdicts are not shown live because the API key is in evaluation,
+but the enrichment worker is already deployed and integration-ready."
+Handoff:
+"Prathik will now show SOAR orchestration."
+
+23:30-28:00  Prathik (SOAR)
+Show:
+- Shuffle UI at localhost:13001
+Commands:
+- kubectl get pods -n soar
+- kubectl get svc -n soar
+Optional:
+- kubectl -n soar logs deployment/shuffle-backend --tail=40
+Mention:
+- soar/shuffle/radiant-ir-playbook.json
+Key line:
+"SOAR turns analyst decisions into repeatable, auditable response workflows."
+Handoff:
+"Back to Prem for final summary."
+
+28:00-30:00  Prem (final wrap-up)
+Close with 3 bullets:
+1) Automated deployment with stable reruns (idempotent secrets)
+2) Continuous MISP IOC to Suricata rule operationalization
+3) AI + SOAR integration for faster, smarter response
+Final line:
+"RADIANT proves an end-to-end live SOC workflow on Kubernetes with modular AI and response readiness."
+
+
+============================================================
+C) Fast Recovery Lines (if anything fails live)
+============================================================
+If endpoint not loading:
+- powershell -ExecutionPolicy Bypass -File scripts/stop-local-access.ps1
+- powershell -ExecutionPolicy Bypass -File scripts/start-local-access.ps1
+
+If AI count looks unchanged:
+- Show worker logs first (processing proof)
+- Explain polling interval and refresh once
+
+If one pod restarts:
+- kubectl get pods -A
+- Continue with healthy components and call out Kubernetes self-healing behavior
+
+
+============================================================
+D) Golden Rule for Professional Delivery
+============================================================
+Each speaker uses this sequence only:
+1) What this component does
+2) How we proved it live
+3) Why it matters to SOC operations

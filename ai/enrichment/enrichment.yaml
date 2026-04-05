@@ -39,7 +39,7 @@ data:
             "query": {
                 "bool": {
                     "must": [
-                        {"term": {"event_type": "alert"}},
+              {"term": {"suricata.event_type": "alert"}},
                         {"range": {"@timestamp": {"gte": f"now-{minutes}m"}}}
                     ]
                 }
@@ -49,7 +49,7 @@ data:
         }
         try:
             r = requests.post(
-                f"{ES_URL}/suricata-*/_search",
+          f"{ES_URL}/radiant-suricata-v3-*/_search",
                 json=query, timeout=10
             )
             r.raise_for_status()
@@ -127,7 +127,8 @@ data:
             misp = PyMISP(MISP_URL, MISP_KEY, False)
 
             event = MISPEvent()
-            event.info = f"RADIANT Detection: {alert.get('alert', {}).get('signature', 'Unknown')} [{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}]"
+            s = alert.get("suricata", alert)
+            event.info = f"RADIANT Detection: {s.get('alert', {}).get('signature', 'Unknown')} [{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}]"
             event.distribution = 0
             event.threat_level_id = 2
             event.analysis = 1
@@ -135,7 +136,7 @@ data:
             event.add_tag("tlp:white")
 
             # Source IP
-            src_ip = alert.get("src_ip")
+            src_ip = s.get("src_ip")
             if src_ip:
                 attr = MISPAttribute()
                 attr.type = "ip-src"
@@ -144,7 +145,7 @@ data:
                 event.add_attribute(**attr)
 
             # Destination IP
-            dest_ip = alert.get("dest_ip")
+            dest_ip = s.get("dest_ip")
             if dest_ip:
                 attr = MISPAttribute()
                 attr.type = "ip-dst"
@@ -153,7 +154,7 @@ data:
                 event.add_attribute(**attr)
 
             # HTTP host if present
-            http = alert.get("http", {})
+            http = s.get("http", {})
             if http.get("hostname"):
                 event.add_attribute("domain", http["hostname"],
                                     comment="HTTP hostname from alert")
@@ -190,15 +191,16 @@ data:
 
         processed_ids.add(alert_id)
         alert = hit["_source"]
-        sig = alert.get("alert", {}).get("signature", "")
-        src  = alert.get("src_ip", "unknown")
-        dest = alert.get("dest_ip", "unknown")
+        s = alert.get("suricata", alert)
+        sig = s.get("alert", {}).get("signature", "")
+        src  = s.get("src_ip", "unknown")
+        dest = s.get("dest_ip", "unknown")
 
         log.info(f"Processing alert: {sig} | {src} -> {dest}")
 
         # Submit HTTP URLs to Triage
         sample_id = None
-        http = alert.get("http", {})
+        http = s.get("http", {})
         if http.get("hostname") and TRIAGE_KEY:
             url = f"http://{http['hostname']}{http.get('url','/')}"
             sample_id = submit_to_triage(url, kind="url")
@@ -273,6 +275,13 @@ spec:
         - sh
         - -c
         - pip install --quiet pymisp==2.4.196 requests==2.32.3 -t /app/deps
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "150m"
         volumeMounts:
         - name: app-deps
           mountPath: /app/deps

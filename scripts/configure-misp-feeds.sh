@@ -5,13 +5,21 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+CREDS_FILE="$ROOT_DIR/credentials.txt"
+
 MISP_URL="http://misp.lab"
-MISP_KEY=$(grep "MISP auth key" ../credentials.txt | awk '{print $NF}')
+MISP_KEY="${MISP_API_KEY:-}"
+
+if [ -z "$MISP_KEY" ] && [ -f "$CREDS_FILE" ]; then
+  MISP_KEY=$(grep "MISP auth key" "$CREDS_FILE" | awk '{print $NF}')
+fi
 
 if [ -z "$MISP_KEY" ]; then
   echo "ERROR: Could not read MISP auth key from credentials.txt"
-  echo "Get your key from MISP UI: Administration > My Profile > Auth key"
-  read -p "Paste your MISP auth key: " MISP_KEY
+  echo "Set MISP_API_KEY env var or ensure credentials.txt contains MISP auth key"
+  exit 1
 fi
 
 CURL="curl -s -H \"Authorization: $MISP_KEY\" -H \"Accept: application/json\" -H \"Content-Type: application/json\""

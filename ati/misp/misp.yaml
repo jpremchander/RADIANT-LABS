@@ -93,7 +93,7 @@ spec:
       containers:
         - name: misp
           image: ghcr.io/misp/misp-docker/misp-core:latest
-          imagePullPolicy: Never
+          imagePullPolicy: IfNotPresent
           env:
             - name: MYSQL_HOST
               value: "mysql.ati.svc.cluster.local"
@@ -126,7 +126,10 @@ spec:
 
             # Official misp-docker variable
             - name: BASE_URL
-              value: "http://192.168.10.90"
+              valueFrom:
+                secretKeyRef:
+                  name: misp-secret
+                  key: base-url
 
             # Keep settings in config.php behavior explicit
             - name: ENABLE_DB_SETTINGS
@@ -150,18 +153,14 @@ spec:
                     HTACCESS=/var/www/MISP/app/webroot/.htaccess
 
                     # Force lab HTTP URL after container startup logic completes
-                    sed -i 's|https://localhost|http://192.168.10.90|g' "$CONFIG"
-                    sed -i 's|http://localhost|http://192.168.10.90|g' "$CONFIG"
-                    sed -i 's|https://192.168.10.90:30080|http://192.168.10.90|g' "$CONFIG"
-                    sed -i 's|http://192.168.10.90:30080|http://192.168.10.90|g' "$CONFIG"
+                    sed -i 's|https://localhost|https://127.0.0.1:18443|g' "$CONFIG"
+                    sed -i 's|http://localhost|https://127.0.0.1:18443|g' "$CONFIG"
+                    sed -i 's|https://192.168.10.90:30080|https://127.0.0.1:18443|g' "$CONFIG"
+                    sed -i 's|http://192.168.10.90:30080|https://127.0.0.1:18443|g' "$CONFIG"
+                    sed -i 's|http://192.168.10.90|https://127.0.0.1:18443|g' "$CONFIG"
+                    sed -i 's|https://192.168.10.90|https://127.0.0.1:18443|g' "$CONFIG"
 
-                    # Best-effort disable force_https if present
-                    sed -i "s|'Security.force_https' => true|'Security.force_https' => false|g" "$CONFIG" || true
-                    sed -i "s|'Security.force_https' => '1'|'Security.force_https' => false|g" "$CONFIG" || true
-
-                    # Disable HTTPS rewrite in .htaccess if present
-                    sed -i 's|^RewriteCond %{HTTPS} !=on|# RewriteCond %{HTTPS} !=on|g' "$HTACCESS" || true
-                    sed -i 's|^RewriteRule \^ https://%{SERVER_NAME}%{REQUEST_URI} \[L,R=301\]|# RewriteRule disabled|g' "$HTACCESS" || true
+                    # Keep HTTPS behavior enabled for localhost TLS endpoint.
 
                     # Log final values for troubleshooting
                     grep -n "baseurl\|external_baseurl\|rest_client_baseurl" "$CONFIG" || true

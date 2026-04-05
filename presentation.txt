@@ -1,0 +1,346 @@
+RADIANT Live Demonstration Script (20-30 Minutes, No PPT)
+Audience format: live terminal + browser walkthrough
+Team speakers: Prem, Surmai, Diksha, Vamshi, Prathik
+Date: 2026-04-05
+
+======================================================================
+0) Demo Setup Checklist (Run before audience joins)
+======================================================================
+1. Start local access tunnels:
+   powershell -ExecutionPolicy Bypass -File scripts/start-local-access.ps1
+
+2. Verify tunnel status:
+   powershell -ExecutionPolicy Bypass -File scripts/status-local-access.ps1
+
+3. Quick cluster sanity:
+   kubectl get pods -A
+
+4. Open tabs and keep ready:
+   - MISP:       https://127.0.0.1:18443/users/login
+   - Kibana:     http://127.0.0.1:15601
+   - Grafana:    http://127.0.0.1:13000
+   - Prometheus: http://127.0.0.1:19090
+   - Shuffle:    http://127.0.0.1:13001
+
+5. Keep one terminal dedicated for kubectl commands.
+
+
+======================================================================
+1) Time Plan (Suggested)
+======================================================================
+- Prem (Kubernetes infrastructure + architecture): 7 minutes
+- Surmai (StamusML AI scoring): 6 minutes
+- Diksha (Arkime-AI module): 5 minutes
+- Vamshi (Monitoring dashboards + observability): 5 minutes
+- Prathik (SOAR + integration): 5 minutes
+- Prem (final wrap-up): 2 minutes
+Total: 30 minutes
+
+Known current constraint to disclose professionally:
+- Hatching Triage API key is still in evaluation/approval state.
+- Enrichment worker is deployed and integrated, but external Triage verdict submission is not shown live.
+- This does not block the rest of the pipeline (MISP -> Suricata -> ES/Kibana -> StamusML/Arkime -> SOAR).
+
+
+======================================================================
+2) Speaker Script by Person
+======================================================================
+
+######################################################################
+A) PREM - Kubernetes Infrastructure and Architecture (7 min)
+######################################################################
+Objective:
+- Establish architecture credibility and show the platform is healthy.
+
+What Prem should say (professional script):
+"Good morning/afternoon. We are demonstrating RADIANT, an end-to-end SOC pipeline
+running on Kubernetes. The architecture is split by operational domains:
+ATI for threat intelligence, ADI for detection, AI for enrichment and scoring,
+Monitoring for visibility, and SOAR for orchestration. This structure gives us
+clear separation of concerns, controlled resource allocation, and easier operations."
+
+"I’ll first prove infrastructure readiness and deployment health, then hand over
+to the workflow-specific demos."
+
+Terminal demo commands:
+1) Show cluster/context
+   kubectl config current-context
+   kubectl cluster-info
+   kubectl get nodes -o wide
+
+2) Show architecture by namespace
+   kubectl get ns
+
+3) Show all workloads
+   kubectl get pods -A -o wide
+
+4) Show quotas (governance/multi-team readiness)
+   kubectl get resourcequota -A
+
+5) Show services (integration endpoints)
+   kubectl get svc -A
+
+Dashboard to show:
+- Grafana home page (briefly) for platform health posture.
+
+What to highlight while showing:
+- "All core components are running and mapped to namespace responsibilities."
+- "Resource quotas are enabled for predictable operation."
+- "This is not a toy single-container setup; it is production-style modular design."
+
+Transition line to Surmai:
+"With infrastructure confirmed, Surmai will now show how StamusML scores alerts
+to support analyst prioritization."
+
+
+######################################################################
+B) SURMAI - StamusML AI Scoring (6 min)
+######################################################################
+Objective:
+- Prove StamusML scoring is running and adding triage value.
+
+What Surmai should say:
+"StamusML consumes Suricata alert telemetry and produces risk scores and labels.
+This reduces analyst effort by helping prioritize which alerts need immediate action."
+
+Live demo steps:
+1) Explain source and output indices
+   - Source: radiant-suricata-v3-*
+   - Output: radiant-stamusml-anomaly-*
+
+2) Show worker health
+   kubectl get pods -n ai
+
+3) Show StamusML worker logs
+   kubectl -n ai logs deployment/stamusml-worker --tail=50
+
+4) Show output count
+   curl -s http://127.0.0.1:19200/radiant-stamusml-anomaly-*/_count
+
+5) Optional sample scored document
+   curl -s "http://127.0.0.1:19200/radiant-stamusml-anomaly-*/_search?size=1"
+
+What to emphasize:
+- "Scoring happens continuously from live telemetry, not offline only."
+- "Risk labels support faster triage and better prioritization."
+- "The module is pluggable and can evolve to stronger models."
+
+Transition line to Diksha:
+"After scoring, Diksha will show Arkime-AI tagging that adds traffic context
+for hunting and investigation workflows."
+
+
+######################################################################
+C) DIKSHA - Arkime-AI Module (5 min)
+######################################################################
+Objective:
+- Explain Arkime-AI value and show proof from logs/index output.
+
+What Diksha should say:
+"Arkime-AI processes Suricata HTTP telemetry and tags network events with contextual
+labels such as observed, scripted-client, and high-risk-web. This gives analysts
+faster prioritization than raw events alone."
+
+Live demo steps:
+1) Explain source and destination indices
+   - Source: radiant-suricata-v3-*
+   - Output: radiant-arkime-ai-tags-*
+
+2) Show worker health
+   kubectl get pods -n ai
+
+3) Show worker logs (live processing evidence)
+   kubectl -n ai logs deployment/arkime-ai-worker --tail=50
+
+4) Show output index count (if ES port-forward already open on 19200)
+   curl -s http://127.0.0.1:19200/radiant-arkime-ai-tags-*/_count
+
+5) (Optional) Show one sample enriched document
+   curl -s "http://127.0.0.1:19200/radiant-arkime-ai-tags-*/_search?size=1"
+
+Kibana dashboard/view to show:
+- Discover with arkime-ai output index pattern (if data view exists)
+- Or show raw JSON quickly from terminal if data view is not configured
+
+What to emphasize:
+- "Arkime-AI creates machine-usable tags for downstream automation and hunting."
+- "This is a modular worker and can be replaced with stronger models later."
+
+Transition line to Vamshi:
+"Along with context enrichment, we need operational visibility. Vamshi will show
+how monitoring dashboards confirm platform and pipeline health in real time."
+
+
+######################################################################
+D) VAMSHI - Monitoring and Live Logs (5 min)
+######################################################################
+Objective:
+- Demonstrate that dashboards show live telemetry and infra health.
+
+What Vamshi should say:
+"Our monitoring layer combines Kibana for security telemetry exploration and
+Grafana/Prometheus for platform observability. This gives both SOC analysts and
+platform engineers the visibility they need."
+
+Live demo steps:
+1) Kibana (security telemetry)
+   - Open Discover
+   - Data view/index: radiant-suricata-v3-*
+   - Filter: suricata.event_type : "alert"
+   - Show recent documents/time picker set to Last 15 minutes
+
+2) Optional quick traffic generation for live refresh
+   DEMO_MODE=quick DEMO_INTERFACE=eth0 bash scripts/demo-pcap-replay.sh
+
+3) Refresh Discover and show new events
+
+4) Prometheus quick check
+   - Open Prometheus UI (localhost:19090)
+   - Show targets/query page quickly
+
+5) Grafana quick check
+   - Open Grafana dashboards
+   - Show panel updates and service trends
+
+Terminal support command:
+   kubectl top pods -A
+
+What to emphasize:
+- "Detection logs are arriving in near real time."
+- "Infra metrics and security telemetry are both observable from dashboards."
+
+Transition line to Prathik:
+"Now Prathik will show the SOAR orchestration layer and incident response flow."
+
+Important note Vamshi should mention at the end of monitoring section:
+"You may notice we are not demonstrating external Hatching Triage verdicts today.
+Our API key is currently under evaluation. The enrichment module is already deployed,
+and once the key is approved, external verdict enrichment can be enabled immediately
+without architecture changes."
+
+
+######################################################################
+E) PRATHIK - SOAR Orchestration and Response Flow (5 min)
+######################################################################
+Objective:
+- Demonstrate response orchestration with Shuffle and incident workflow integration.
+
+What Prathik should say:
+"Shuffle is our SOAR layer. It can consume detection context and execute response
+playbooks with repeatable, auditable steps. This is where detection turns into action."
+
+Additional integration statement for Prathik:
+"One integration currently in staged mode is Hatching Triage enrichment because
+our API key is still under evaluation. The enrichment worker and secret wiring are
+already present, so activation is a configuration step once approval is completed."
+
+Live demo steps:
+1) Show Shuffle UI
+   - Open localhost:13001
+   - Mention available playbook and integration potential
+   - Reference file: soar/shuffle/radiant-ir-playbook.json
+
+2) Show Shuffle pods/services
+   kubectl get pods -n soar
+   kubectl get svc -n soar
+
+3) Optional backend log snippet
+   kubectl -n soar logs deployment/shuffle-backend --tail=40
+
+4) Show pipeline continuity recap quickly:
+   - MISP feed -> rules updater -> Suricata alert -> ES/Kibana -> AI enrichment/scoring -> SOAR
+
+Transition line to Prem:
+"I’ll hand back to Prem for the final summary and assignment close."
+
+
+######################################################################
+F) PREM - Final Wrap-up (2 min)
+######################################################################
+Objective:
+- Close the demo with clear end-to-end value and assignment outcomes.
+
+Final wrap-up line (speak clearly):
+"RADIANT demonstrates a complete and automated security pipeline: threat intelligence
+operationalization, real-time detection, AI-assisted triage, and orchestration-ready
+response on a Kubernetes-native architecture."
+
+Close with 3 outcome bullets:
+1) "Automated deployment and stable reruns with idempotent secrets."
+2) "Continuous intel-to-detection pipeline with automatic rule refresh."
+3) "Actionable SOC outputs through AI scoring/tagging and SOAR integration."
+
+Optional final line on roadmap:
+"After Triage key approval, we will enable external verdict enrichment in the same
+pipeline to add malware sandbox context directly into analyst workflows."
+
+
+======================================================================
+3) Professional Handoff and Speaking Rules
+======================================================================
+1) Keep each speaker to 1 objective + 3 proof points + 1 handoff line.
+2) Do not overlap explanations; each person owns their domain.
+3) Never read logs line-by-line; extract one key line and interpret it.
+4) If command output is long, summarize aloud in one sentence.
+5) Use this phrasing pattern:
+   - "What this component does"
+   - "How we proved it live"
+   - "Why it matters operationally"
+
+
+======================================================================
+4) Backup Plan If Something Fails Live
+======================================================================
+If dashboard not loading:
+1) powershell -ExecutionPolicy Bypass -File scripts/status-local-access.ps1
+2) powershell -ExecutionPolicy Bypass -File scripts/stop-local-access.ps1
+3) powershell -ExecutionPolicy Bypass -File scripts/start-local-access.ps1
+
+If one pod restarts unexpectedly:
+1) kubectl get pods -A
+2) kubectl describe pod <pod-name> -n <namespace>
+3) Continue demo with healthy components and explain self-healing model.
+
+If AI count does not move immediately:
+1) Show worker logs first (processing proof)
+2) Wait one poll interval and refresh count
+3) Explain polling window and eventual consistency
+
+
+======================================================================
+5) Extra Demo Enhancements (If extra 2-3 minutes available)
+======================================================================
+1) Show rerun safety:
+   FORCE_ROTATE_SECRETS=false bash scripts/automate-all.sh
+   (Call out idempotent credential behavior)
+
+2) Show deployment modularity:
+   kubectl apply -k ai
+
+3) Show namespace-level resource governance:
+   kubectl get resourcequota -A
+
+
+======================================================================
+6) End-of-Demo Q&A Ready Answers
+======================================================================
+Q: "Is this fully automated?"
+A: "Yes, deployment and post-validation are automated through scripts/automate-all.sh,
+with idempotent secret handling by default."
+
+Q: "How are rules updated from threat intel?"
+A: "A scheduled CronJob pulls MISP IOCs, updates Suricata rules ConfigMap, and triggers
+rollout to apply fresh rules."
+
+Q: "What is the AI value here?"
+A: "StamusML adds risk scores, Arkime-AI adds context tags; both reduce triage time and
+improve prioritization."
+
+Q: "Can this scale/extend?"
+A: "Yes. The architecture is namespace-isolated, modular, and kustomize-friendly,
+so new workers and integrations can be added with minimal disruption."
+
+Q: "Why is Triage analysis not shown in this live demo?"
+A: "The Hatching Triage API key is currently in evaluation status. The enrichment
+component is already deployed and integrated; enabling verdict analysis is a final
+configuration step after key approval."

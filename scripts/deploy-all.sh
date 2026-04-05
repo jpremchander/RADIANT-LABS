@@ -37,7 +37,9 @@ echo ""
 log "Pre-flight checks..."
 kubectl cluster-info > /dev/null 2>&1 || fail "Cannot connect to Kubernetes cluster"
 kubectl get storageclass local-path > /dev/null 2>&1 || fail "local-path StorageClass not found"
-[ -f credentials.txt ] || fail "credentials.txt not found. Run: bash scripts/generate-secrets.sh first"
+if [ ! -f credentials.txt ]; then
+  warn "credentials.txt not found; it will be created in Step 2"
+fi
 log "Pre-flight: OK"
 echo ""
 
@@ -98,10 +100,13 @@ wait_for_pod adi "app=filebeat" 120
 log "ADI stack: Ready"
 echo ""
 
-# Step 9: AI enrichment
-log "Step 9/10: Deploying AI enrichment worker..."
-kubectl apply -f ai/enrichment/enrichment.yaml
-log "AI enrichment: Deployed (will start after Triage API key is set)"
+# Step 9: AI add-ons (modular)
+log "Step 9/10: Deploying AI add-ons (Enrichment + StamusML + Arkime AI)..."
+kubectl apply -k ai
+kubectl rollout status deployment/enrichment-worker -n ai --timeout=180s || warn "enrichment-worker rollout delayed"
+kubectl rollout status deployment/stamusml-worker -n ai --timeout=180s || warn "stamusml-worker rollout delayed"
+kubectl rollout status deployment/arkime-ai-worker -n ai --timeout=180s || warn "arkime-ai-worker rollout delayed"
+log "AI add-ons: Deployed"
 echo ""
 
 # Step 10: Shuffle SOAR
@@ -134,4 +139,5 @@ warn "Next steps:"
 echo "  1. Open credentials.txt and note your MISP admin password"
 echo "  2. Log into MISP and get your API auth key"
 echo "  3. Add your Triage API key: bash scripts/update-triage-key.sh YOUR_KEY"
-echo "  4. Configure MISP feeds: bash scripts/configure-misp-feeds.sh"
+echo "  4. (Optional) Configure StamusML/Arkime endpoints: bash scripts/update-ai-addon-secrets.sh STAMUSML_API_URL STAMUSML_API_KEY ARKIME_API_URL ARKIME_API_KEY"
+echo "  5. Configure MISP feeds: bash scripts/configure-misp-feeds.sh"

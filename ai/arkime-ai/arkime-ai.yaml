@@ -1,0 +1,200 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arkime-ai-script
+  namespace: ai
+data:
+  worker.py: |
+    #!/usr/bin/env python3
+    import os
+    import time
+    import logging
+    from datetime import datetime, timezone
+
+    import requests
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    log = logging.getLogger("radiant-arkime-ai")
+
+    ES_URL = os.getenv("ES_URL", "http://elasticsearch.monitoring.svc.cluster.local:9200")
+    POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "60"))
+    ARKIME_API_URL = os.getenv("ARKIME_API_URL", "")
+    ARKIME_API_KEY = os.getenv("ARKIME_API_KEY", "")
+
+    seen = set()
+
+    def fetch_http_events():
+      query = {
+        "query": {
+          "bool": {
+            "must": [
+              {"term": {"suricata.event_type": "http"}},
+              {"range": {"@timestamp": {"gte": "now-10m"}}}
+            ]
+          }
+        },
+        "sort": [{"@timestamp": {"order": "desc"}}],
+        "size": 100
+      }
+      try:
+        r = requests.post(f"{ES_URL}/radiant-suricata-v3-*/_search", json=query, timeout=10)
+        r.raise_for_status()
+        return r.json().get("hits", {}).get("hits", [])
+      except Exception as exc:
+        log.error("http event query failed: %s", exc)
+        return []
+
+    def classify_event(doc):
+      event = doc.get("suricata", doc)
+      http = event.get("http", {})
+      host = (http.get("hostname") or "").lower()
+      uri = (http.get("url") or "").lower()
+      ua = (http.get("http_user_agent") or "").lower()
+
+      tags = ["arkime:observed"]
+
+      suspicious_words = ["gate.php", "payload", "cmd", "shell", "dropper", "malware"]
+      if any(w in host or w in uri for w in suspicious_words):
+        tags.append("arkime:high-risk-web")
+
+      if "python" in ua or "curl" in ua or "wget" in ua:
+        tags.append("arkime:scripted-client")
+
+      if len(tags) == 1:
+        tags.append("arkime:normal-web")
+
+      confidence = 0.9 if "arkime:high-risk-web" in tags else 0.55
+      return tags, confidence
+
+    def index_tags(hit, tags, confidence):
+      src = hit.get("_source", {})
+      payload = {
+        "@timestamp": datetime.now(timezone.utc).isoformat(),
+        "source_index": hit.get("_index"),
+        "source_id": hit.get("_id"),
+        "event": src,
+        "arkime_ai": {
+          "tags": tags,
+          "confidence": confidence,
+          "model": "radiant-tagger-v1"
+        }
+      }
+      idx = f"radiant-arkime-ai-tags-{datetime.now(timezone.utc).strftime('%Y.%m.%d')}"
+      try:
+        r = requests.post(f"{ES_URL}/{idx}/_doc", json=payload, timeout=10)
+        r.raise_for_status()
+      except Exception as exc:
+        log.error("index arkime tags failed: %s", exc)
+
+    def send_to_arkime(hit_id, tags, confidence):
+      if not ARKIME_API_URL:
+        return
+
+      headers = {"Content-Type": "application/json"}
+      if ARKIME_API_KEY:
+        headers["X-API-KEY"] = ARKIME_API_KEY
+
+      body = {
+        "source_id": hit_id,
+        "tags": tags,
+        "confidence": confidence,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+      }
+
+      try:
+        requests.post(ARKIME_API_URL, headers=headers, json=body, timeout=10)
+      except Exception as exc:
+        log.warning("arkime api forward failed: %s", exc)
+
+    def main():
+      log.info("Arkime AI tagger started")
+      while True:
+        events = fetch_http_events()
+        for hit in events:
+          hit_id = hit.get("_id")
+          if not hit_id or hit_id in seen:
+            continue
+          seen.add(hit_id)
+          tags, confidence = classify_event(hit.get("_source", {}))
+          index_tags(hit, tags, confidence)
+          send_to_arkime(hit_id, tags, confidence)
+          log.info("tagged event %s tags=%s confidence=%.2f", hit_id, tags, confidence)
+        time.sleep(POLL_INTERVAL)
+
+    if __name__ == "__main__":
+      main()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: arkime-ai-worker
+  namespace: ai
+  labels:
+    app: arkime-ai-worker
+    project: radiant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: arkime-ai-worker
+  template:
+    metadata:
+      labels:
+        app: arkime-ai-worker
+        project: radiant
+    spec:
+      initContainers:
+      - name: install-deps
+        image: python:3.12-slim
+        command: ["sh", "-c", "pip install --quiet requests==2.32.3 -t /app/deps"]
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "150m"
+        volumeMounts:
+        - name: app-deps
+          mountPath: /app/deps
+      containers:
+      - name: arkime-ai-worker
+        image: python:3.12-slim
+        imagePullPolicy: IfNotPresent
+        command: ["sh", "-c", "PYTHONPATH=/app/deps python /scripts/worker.py"]
+        env:
+        - name: ES_URL
+          value: "http://elasticsearch.monitoring.svc.cluster.local:9200"
+        - name: POLL_INTERVAL
+          value: "60"
+        - name: ARKIME_API_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-addon-secrets
+              key: arkime-api-url
+              optional: true
+        - name: ARKIME_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-addon-secrets
+              key: arkime-api-key
+              optional: true
+        resources:
+          requests:
+            memory: "96Mi"
+            cpu: "80m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+        volumeMounts:
+        - name: arkime-ai-script
+          mountPath: /scripts
+        - name: app-deps
+          mountPath: /app/deps
+      volumes:
+      - name: arkime-ai-script
+        configMap:
+          name: arkime-ai-script
+          defaultMode: 0755
+      - name: app-deps
+        emptyDir: {}

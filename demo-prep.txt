@@ -1,0 +1,309 @@
+RADIANT Assignment Demo Prep (Step-by-Step)
+Date: 2026-04-05
+
+============================================================
+1) Demo Goal (What to say in 20-30 seconds)
+============================================================
+"This project is an end-to-end cyber defense pipeline in Kubernetes.
+MISP ingests and manages threat intelligence, Suricata detects traffic,
+Filebeat ships logs, Elasticsearch/Kibana visualizes events, AI add-ons
+(StamusML and Arkime-AI) enrich and score detections, and Shuffle enables
+SOAR workflows. The pipeline is automated and continuously updates rules
+from MISP into Suricata."
+
+
+============================================================
+2) Pre-Demo Setup (Do this before presenting)
+============================================================
+A) Open terminal in repo root.
+B) Start local access tunnels:
+   powershell -ExecutionPolicy Bypass -File scripts/start-local-access.ps1
+
+C) Confirm tunnels are healthy:
+   powershell -ExecutionPolicy Bypass -File scripts/status-local-access.ps1
+
+D) Optional health snapshot (good to run once before audience joins):
+   bash scripts/health-check.sh
+
+E) Keep these URLs ready in browser tabs:
+   - MISP:       https://127.0.0.1:18443/users/login
+   - Kibana:     http://127.0.0.1:15601
+   - Grafana:    http://127.0.0.1:13000
+   - Prometheus: http://127.0.0.1:19090
+   - Shuffle:    http://127.0.0.1:13001
+
+
+============================================================
+3) Demo Flow (Recommended order)
+============================================================
+
+------------------------------
+Step 1: Show architecture
+------------------------------
+Say:
+- "RADIANT has 5 namespaces: ati, adi, ai, monitoring, soar."
+- "ATI = intel (MISP/MySQL/Redis), ADI = detection (Suricata/Filebeat),
+   AI = enrichment/scoring workers, Monitoring = ES/Kibana/Grafana/Prometheus,
+   SOAR = Shuffle orchestration."
+
+Show namespace layout:
+   kubectl get ns
+
+Show everything grouped by namespace:
+   kubectl get pods -A -o wide
+
+Talking point:
+- "Each namespace isolates a phase of the SOC pipeline and keeps resource
+   quotas controlled."
+
+
+------------------------------
+Step 2: Show cluster and node health
+------------------------------
+Commands:
+   kubectl config current-context
+   kubectl cluster-info
+   kubectl get nodes -o wide
+   kubectl top nodes
+
+Say:
+- "The cluster is healthy and all control/data plane components are up."
+
+
+------------------------------
+Step 3: Show key workloads are running
+------------------------------
+Commands:
+   kubectl get pods -n ati
+   kubectl get pods -n adi
+   kubectl get pods -n ai
+   kubectl get pods -n monitoring
+   kubectl get pods -n soar
+
+What to highlight:
+- ati: misp, mysql, redis
+- adi: suricata, filebeat, rules-updater CronJob runs periodically
+- ai: enrichment-worker, stamusml-worker, arkime-ai-worker
+- monitoring: elasticsearch, kibana, grafana, prometheus
+- soar: shuffle-frontend, shuffle-backend, shuffle-opensearch
+
+
+------------------------------
+Step 4: Show MISP feeds are enabled
+------------------------------
+Option A (UI proof, easiest for live demo):
+1) Login to MISP.
+2) Go to Sync Actions -> List Feeds.
+3) Show enabled feeds and recent pull/import status.
+
+Option B (CLI/API proof):
+1) Get MISP auth key from credentials file or MISP profile.
+2) Query feeds via API (replace KEY):
+   curl -k -s -H "Authorization: KEY" -H "Accept: application/json" \
+     https://127.0.0.1:18443/feeds/index | head
+
+Talking point:
+- "Threat intel is continuously imported from configured MISP feeds."
+
+
+------------------------------
+Step 5: Show automatic MISP -> Suricata rule update
+------------------------------
+This is one of the most important assignment requirements.
+
+A) Show the CronJob schedule:
+   kubectl get cronjob -n adi suricata-rules-updater -o wide
+
+B) Show recent CronJob runs:
+   kubectl get jobs -n adi --sort-by=.metadata.creationTimestamp | tail -n 5
+
+C) Show updater logs from latest job:
+   kubectl logs -n adi job/$(kubectl get jobs -n adi --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
+
+D) Show Suricata rules ConfigMap has auto-generated content:
+   kubectl get configmap suricata-rules -n adi -o jsonpath='{.data.misp-iocs\.rules}' | head -n 30
+
+E) Show metadata line proving update timestamp:
+   kubectl get configmap suricata-rules -n adi -o jsonpath='{.data.misp-iocs\.rules}' | grep "Last update"
+
+F) Show Suricata DaemonSet got rollout trigger annotation after rule update:
+   kubectl get ds suricata -n adi -o jsonpath='{.spec.template.metadata.annotations}'
+
+Say:
+- "MISP IOCs are converted into Suricata rules automatically on a schedule,
+   ConfigMap updates are applied, and Suricata rolls to pick up fresh rules."
+
+
+------------------------------
+Step 6: Show live detection logs in dashboards
+------------------------------
+A) Kibana:
+- Open Discover.
+- Index pattern/data view: radiant-suricata-v3-*
+- Filter example:
+  suricata.event_type : "alert"
+
+B) Generate quick demo traffic (optional but useful):
+   DEMO_MODE=quick DEMO_INTERFACE=eth0 bash scripts/demo-pcap-replay.sh
+
+C) Refresh Kibana and show new events appearing.
+
+Say:
+- "This proves near-real-time detection telemetry ingestion."
+
+
+------------------------------
+Step 7: Explain and show AI add-ons (StamusML + Arkime-AI)
+------------------------------
+
+StamusML worker (ai/stamusml/stamusml.yaml):
+- Reads Suricata alert events from radiant-suricata-v3-*.
+- Calculates heuristic score and risk level (low/medium/high).
+- Writes results to radiant-stamusml-anomaly-*.
+- Optional external API forwarding via secret values.
+
+Arkime-AI worker (ai/arkime-ai/arkime-ai.yaml):
+- Reads Suricata HTTP events.
+- Applies tagging logic (normal/suspicious/scripted-client etc).
+- Writes results to radiant-arkime-ai-tags-*.
+- Optional external API forwarding via secret values.
+
+Live proof commands:
+   kubectl -n ai logs deployment/stamusml-worker --tail=50
+   kubectl -n ai logs deployment/arkime-ai-worker --tail=50
+
+Show AI output counts:
+   kubectl -n monitoring port-forward svc/elasticsearch 19200:9200
+   curl -s http://127.0.0.1:19200/radiant-stamusml-anomaly-*/_count
+   curl -s http://127.0.0.1:19200/radiant-arkime-ai-tags-*/_count
+
+Optional index sample docs:
+   curl -s http://127.0.0.1:19200/radiant-stamusml-anomaly-*/_search?size=1
+   curl -s http://127.0.0.1:19200/radiant-arkime-ai-tags-*/_search?size=1
+
+Say:
+- "AI workers consume detections and produce higher-value context for triage."
+
+
+------------------------------
+Step 8: Show dashboards and what each one is for
+------------------------------
+Kibana:
+- Security event exploration and IOC/detection drill-down.
+
+Grafana:
+- Platform metrics and service observability.
+
+Prometheus:
+- Raw metric collection and query endpoint.
+
+Shuffle:
+- SOAR playbook execution and response orchestration.
+
+Say:
+- "This separates telemetry analysis, infra health, and response orchestration."
+
+
+------------------------------
+Step 9: Optional SOAR tie-in (bonus points)
+------------------------------
+- Show Shuffle UI and mention that detections can trigger response playbooks.
+- Reference playbook file:
+  soar/shuffle/radiant-ir-playbook.json
+
+Say:
+- "The design supports automated response actions after analyst validation."
+
+
+============================================================
+4) Strong Assignment Talking Points
+============================================================
+Use these concise bullets during Q&A:
+
+1. "The deployment is automated end-to-end with scripts/automate-all.sh."
+2. "Secrets are idempotent by default; reruns do not unexpectedly rotate creds."
+3. "MISP feed intel is operationalized into Suricata rules on a schedule."
+4. "Detection and AI enrichment are decoupled via Elasticsearch indices."
+5. "StamusML and Arkime-AI are modular and can be replaced/extended."
+6. "Monitoring and SOAR are integrated, enabling closed-loop SOC workflows."
+
+
+============================================================
+5) Extra Things You Can Do for Higher Marks
+============================================================
+1) Capture evidence bundle:
+   - health-check output
+   - pod snapshots
+   - screenshots from all dashboards
+   - logs showing AI worker processing lines
+   - index count outputs before/after test traffic
+
+2) Show failure resilience:
+   - restart one worker and show self-heal:
+     kubectl rollout restart deployment/stamusml-worker -n ai
+
+3) Show controlled re-deploy:
+   - rerun automation and prove no credential drift:
+     FORCE_ROTATE_SECRETS=false bash scripts/automate-all.sh
+
+4) Show configuration-as-code maturity:
+   - explain kustomize layer under ai/kustomization.yaml
+
+5) Show security hardening direction (future work):
+   - network policies
+   - secret manager integration
+   - TLS cert automation
+
+
+============================================================
+6) Fast Troubleshooting During Live Demo
+============================================================
+If a page does not open:
+1) Check tunnels:
+   powershell -ExecutionPolicy Bypass -File scripts/status-local-access.ps1
+2) Restart tunnels:
+   powershell -ExecutionPolicy Bypass -File scripts/stop-local-access.ps1
+   powershell -ExecutionPolicy Bypass -File scripts/start-local-access.ps1
+3) Confirm pods:
+   kubectl get pods -A
+
+If AI logs seem quiet:
+1) Generate traffic:
+   DEMO_MODE=quick DEMO_INTERFACE=eth0 bash scripts/demo-pcap-replay.sh
+2) Check workers:
+   kubectl -n ai logs deployment/stamusml-worker --tail=100
+   kubectl -n ai logs deployment/arkime-ai-worker --tail=100
+
+If rules updater evidence is requested:
+1) Show latest job logs:
+   kubectl logs -n adi job/$(kubectl get jobs -n adi --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
+2) Show rules ConfigMap timestamp:
+   kubectl get configmap suricata-rules -n adi -o jsonpath='{.data.misp-iocs\.rules}' | grep "Last update"
+
+
+============================================================
+7) 3-Minute Demo Script (If time is short)
+============================================================
+1) "Architecture and namespaces" (30s)
+   kubectl get ns
+   kubectl get pods -A
+
+2) "MISP feeds + rule automation" (60s)
+   Show MISP feeds page
+   kubectl get cronjob -n adi suricata-rules-updater
+   kubectl get configmap suricata-rules -n adi -o jsonpath='{.data.misp-iocs\.rules}' | head -n 15
+
+3) "Live logs in dashboards" (45s)
+   Show Kibana Discover with radiant-suricata-v3-* alerts
+
+4) "AI add-ons value" (45s)
+   kubectl -n ai logs deployment/stamusml-worker --tail=20
+   kubectl -n ai logs deployment/arkime-ai-worker --tail=20
+
+
+============================================================
+8) Wrap-up line
+============================================================
+"RADIANT demonstrates a practical SOC pipeline: threat intel ingestion,
+continuous rule operationalization, real-time detection visibility, and AI-assisted
+triage with modular automation-ready architecture."

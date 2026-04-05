@@ -3,7 +3,8 @@ set -e
 GREEN='\033[0;32m'; NC='\033[0m'
 log() { echo -e "${GREEN}[DEMO]${NC} $1"; }
 PCAP_DIR="/opt/radiant-pcaps"
-INTERFACE="ens33"
+INTERFACE="${DEMO_INTERFACE:-eth0}"
+MODE="${DEMO_MODE:-}"
 
 command -v tcpreplay &>/dev/null || sudo apt install -y tcpreplay
 sudo mkdir -p "$PCAP_DIR"
@@ -40,7 +41,21 @@ PYEOF
 
 log "PCAP ready. Choose replay mode:"
 echo "  1) Quick (5x speed)   2) Slow (1x)   3) Loop"
-read -p "Choice [1]: " C; C=${C:-1}
+if [ -n "$MODE" ]; then
+  case "$MODE" in
+    quick) C=1 ;;
+    slow) C=2 ;;
+    loop) C=3 ;;
+    *)
+      echo "Invalid DEMO_MODE: $MODE (use quick|slow|loop)"
+      exit 1
+      ;;
+  esac
+  echo "Running non-interactive mode: $MODE on interface $INTERFACE"
+else
+  read -p "Choice [1]: " C; C=${C:-1}
+fi
+
 case $C in
   1) sudo tcpreplay --intf1=$INTERFACE --multiplier=5 "$PCAP_DIR/demo-radiant.pcap" ;;
   2) sudo tcpreplay --intf1=$INTERFACE --multiplier=1 "$PCAP_DIR/demo-radiant.pcap" ;;

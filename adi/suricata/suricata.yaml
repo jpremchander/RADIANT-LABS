@@ -32,7 +32,7 @@ spec:
       initContainers:
       - name: copy-rules
         image: docker.io/library/busybox:1.36
-        imagePullPolicy: Never
+        imagePullPolicy: IfNotPresent
         command:
         - sh
         - -c
@@ -52,7 +52,7 @@ spec:
       containers:
       - name: suricata
         image: docker.io/jasonish/suricata:7.0
-        imagePullPolicy: Never
+        imagePullPolicy: IfNotPresent
         securityContext:
           capabilities:
             add:
@@ -63,7 +63,7 @@ spec:
         - /bin/sh
         - -c
         - |
-          exec suricata -i ens33 -l /var/log/suricata -S /var/lib/suricata/rules/misp-iocs.rules -v
+          exec suricata -i eth0 -l /var/log/suricata -S /var/lib/suricata/rules/misp-iocs.rules -v
         resources:
           requests:
             memory: "512Mi"

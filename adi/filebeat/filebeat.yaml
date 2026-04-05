@@ -18,7 +18,7 @@ data:
               overwrite_keys: false
               expand_keys: true
         fields:
-          source: suricata
+          radiant_source: suricata
           environment: radiant-lab
         fields_under_root: true
         ignore_older: 1h
@@ -26,10 +26,7 @@ data:
         prospector.scanner.check_interval: 5s
 
     setup.ilm.enabled: false
-    setup.template.enabled: true
-    setup.template.name: "radiant-suricata-v3"
-    setup.template.pattern: "radiant-suricata-v3-*"
-    setup.template.overwrite: true
+    setup.template.enabled: false
 
     output.elasticsearch:
       hosts: ["http://elasticsearch.monitoring.svc.cluster.local:9200"]

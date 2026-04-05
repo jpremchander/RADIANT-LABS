@@ -1,0 +1,194 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stamusml-script
+  namespace: ai
+data:
+  worker.py: |
+    #!/usr/bin/env python3
+    import os
+    import time
+    import logging
+    from datetime import datetime, timezone
+
+    import requests
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    log = logging.getLogger("radiant-stamusml")
+
+    ES_URL = os.getenv("ES_URL", "http://elasticsearch.monitoring.svc.cluster.local:9200")
+    POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "45"))
+    STAMUSML_API_URL = os.getenv("STAMUSML_API_URL", "")
+    STAMUSML_API_KEY = os.getenv("STAMUSML_API_KEY", "")
+
+    processed = set()
+
+    def fetch_recent_suricata_alerts():
+      query = {
+        "query": {
+          "bool": {
+            "must": [
+              {"term": {"suricata.event_type": "alert"}},
+              {"range": {"@timestamp": {"gte": "now-5m"}}}
+            ]
+          }
+        },
+        "sort": [{"@timestamp": {"order": "desc"}}],
+        "size": 50
+      }
+      try:
+        r = requests.post(f"{ES_URL}/radiant-suricata-v3-*/_search", json=query, timeout=10)
+        r.raise_for_status()
+        return r.json().get("hits", {}).get("hits", [])
+      except Exception as exc:
+        log.error("alert query failed: %s", exc)
+        return []
+
+    def score_alert(doc):
+      event = doc.get("suricata", doc)
+      alert = event.get("alert", {})
+      signature = (alert.get("signature") or "").lower()
+      severity = int(alert.get("severity", 3))
+      base = max(0.0, min(1.0, (4 - severity) / 4))
+
+      keywords = ["trojan", "c2", "malware", "exploit", "ransomware", "command and control"]
+      if any(k in signature for k in keywords):
+        base = min(1.0, base + 0.25)
+
+      risk = "low"
+      if base >= 0.75:
+        risk = "high"
+      elif base >= 0.45:
+        risk = "medium"
+
+      return round(base, 3), risk
+
+    def index_anomaly(hit, score, risk):
+      src = hit.get("_source", {})
+      payload = {
+        "@timestamp": datetime.now(timezone.utc).isoformat(),
+        "source_index": hit.get("_index"),
+        "source_id": hit.get("_id"),
+        "event": src,
+        "stamusml": {
+          "model": "radiant-heuristic-v1",
+          "score": score,
+          "risk": risk
+        }
+      }
+      idx = f"radiant-stamusml-anomaly-{datetime.now(timezone.utc).strftime('%Y.%m.%d')}"
+      try:
+        r = requests.post(f"{ES_URL}/{idx}/_doc", json=payload, timeout=10)
+        r.raise_for_status()
+      except Exception as exc:
+        log.error("index anomaly failed: %s", exc)
+
+    def send_to_stamus_api(hit, score, risk):
+      if not STAMUSML_API_URL:
+        return
+      headers = {"Content-Type": "application/json"}
+      if STAMUSML_API_KEY:
+        headers["Authorization"] = f"Bearer {STAMUSML_API_KEY}"
+      body = {
+        "source_id": hit.get("_id"),
+        "score": score,
+        "risk": risk,
+        "ts": datetime.now(timezone.utc).isoformat()
+      }
+      try:
+        requests.post(STAMUSML_API_URL, json=body, headers=headers, timeout=10)
+      except Exception as exc:
+        log.warning("stamus api forward failed: %s", exc)
+
+    def main():
+      log.info("StamusML worker started")
+      while True:
+        alerts = fetch_recent_suricata_alerts()
+        for hit in alerts:
+          hit_id = hit.get("_id")
+          if not hit_id or hit_id in processed:
+            continue
+          processed.add(hit_id)
+          score, risk = score_alert(hit.get("_source", {}))
+          index_anomaly(hit, score, risk)
+          send_to_stamus_api(hit, score, risk)
+          log.info("scored alert %s score=%.3f risk=%s", hit_id, score, risk)
+        time.sleep(POLL_INTERVAL)
+
+    if __name__ == "__main__":
+      main()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stamusml-worker
+  namespace: ai
+  labels:
+    app: stamusml-worker
+    project: radiant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stamusml-worker
+  template:
+    metadata:
+      labels:
+        app: stamusml-worker
+        project: radiant
+    spec:
+      initContainers:
+      - name: install-deps
+        image: python:3.12-slim
+        command: ["sh", "-c", "pip install --quiet requests==2.32.3 -t /app/deps"]
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "150m"
+        volumeMounts:
+        - name: app-deps
+          mountPath: /app/deps
+      containers:
+      - name: stamusml-worker
+        image: python:3.12-slim
+        imagePullPolicy: IfNotPresent
+        command: ["sh", "-c", "PYTHONPATH=/app/deps python /scripts/worker.py"]
+        env:
+        - name: ES_URL
+          value: "http://elasticsearch.monitoring.svc.cluster.local:9200"
+        - name: POLL_INTERVAL
+          value: "45"
+        - name: STAMUSML_API_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-addon-secrets
+              key: stamusml-api-url
+              optional: true
+        - name: STAMUSML_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-addon-secrets
+              key: stamusml-api-key
+              optional: true
+        resources:
+          requests:
+            memory: "96Mi"
+            cpu: "80m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+        volumeMounts:
+        - name: stamusml-script
+          mountPath: /scripts
+        - name: app-deps
+          mountPath: /app/deps
+      volumes:
+      - name: stamusml-script
+        configMap:
+          name: stamusml-script
+          defaultMode: 0755
+      - name: app-deps
+        emptyDir: {}

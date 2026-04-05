@@ -36,4 +36,5 @@ kubectl get ingressroute -A 2>/dev/null || warn "No IngressRoutes found"
 echo ""
 echo -e "${GREEN}Health check complete.${NC}"
 echo ""
-echo "Add to Windows hosts
+echo "Add to Windows hosts file (if using lab DNS aliases):"
+echo "  192.168.10.90  misp.lab kibana.lab shuffle.lab grafana.lab"
